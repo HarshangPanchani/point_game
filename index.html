@@ -1,0 +1,1055 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>POINT - Card Game</title>
+    <!-- PeerJS for Multiplayer (Free Public Server) -->
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #2E7D32; /* Felt Green */
+            --card-width: 60px;
+            --card-height: 84px;
+            --text-color: white;
+            --accent: #FFD700;
+            --danger: #ff4444;
+        }
+
+        * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
+        body {
+            margin: 0; padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+        }
+
+        /* Landscape Warning */
+        #portrait-warning {
+            display: none;
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: #1a1a1a;
+            z-index: 9999;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 20px;
+        }
+        @media (orientation: portrait) {
+            #portrait-warning { display: flex; }
+        }
+
+        /* Screens */
+        .screen {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            width: 100%; height: 100%;
+            position: absolute; top: 0; left: 0;
+        }
+        .active-screen { display: flex; }
+
+        /* UI Elements */
+        input, button {
+            padding: 10px 15px;
+            margin: 10px;
+            border-radius: 5px;
+            border: none;
+            font-size: 16px;
+        }
+        button { cursor: pointer; background: var(--accent); color: #000; font-weight: bold; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        button.danger { background: var(--danger); color: white; }
+        input { color: #000; }
+
+        /* Lobby */
+        #lobby-list {
+            list-style: none; padding: 0; width: 300px;
+            background: rgba(0,0,0,0.3); border-radius: 10px;
+        }
+        #lobby-list li {
+            padding: 10px; border-bottom: 1px solid rgba(255,255,255,0.1);
+            display: flex; justify-content: space-between; align-items: center;
+        }
+
+        /* Game Layout */
+        #game-ui {
+            width: 100%; height: 100%;
+            display: grid;
+            grid-template-rows: 40px 1fr 140px;
+        }
+
+        /* Top Bar */
+        #top-bar {
+            background: rgba(0,0,0,0.5);
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 0 20px; font-size: 14px;
+        }
+
+        /* Center Table */
+        #table-area {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+        }
+        
+        /* Opponents */
+        #opponents {
+            position: absolute; top: 10px; width: 100%;
+            display: flex; justify-content: center; gap: 20px;
+        }
+        .opponent {
+            background: rgba(0,0,0,0.4);
+            padding: 5px 10px; border-radius: 10px;
+            text-align: center; font-size: 12px;
+            opacity: 0.7;
+        }
+        .opponent.active-turn { border: 2px solid var(--accent); opacity: 1; }
+
+        /* Decks */
+        .deck-placeholder {
+            width: var(--card-width); height: var(--card-height);
+            border: 2px dashed rgba(255,255,255,0.5);
+            border-radius: 5px; margin: 0 20px;
+            display: flex; justify-content: center; align-items: center;
+            position: relative;
+            background: rgba(0,0,0,0.1);
+        }
+        .deck-placeholder span { font-size: 10px; text-align: center; }
+
+        /* Player Hand */
+        #player-area {
+            background: rgba(0,0,0,0.8);
+            display: flex; flex-direction: column;
+            align-items: center;
+            padding-bottom: 5px;
+        }
+        #hand-container {
+            display: flex;
+            justify-content: center;
+            margin-top: -30px; /* Overlap effect */
+            height: 90px;
+        }
+        #controls {
+            display: flex; gap: 10px; margin-top: 5px;
+        }
+
+        /* Card Visuals */
+        .card {
+            width: var(--card-width); height: var(--card-height);
+            background: white; color: black;
+            border-radius: 5px;
+            display: flex; flex-direction: column;
+            justify-content: space-between;
+            padding: 2px 5px;
+            box-shadow: 2px 2px 5px rgba(0,0,0,0.5);
+            font-weight: bold; font-family: courier, monospace;
+            cursor: pointer;
+            position: relative;
+            margin: 0 2px;
+            transition: transform 0.2s;
+        }
+        .card.selected { transform: translateY(-20px); border: 2px solid var(--accent); }
+        .card.red { color: red; }
+        .card.black { color: black; }
+        .card-center { font-size: 24px; align-self: center; position: absolute; top: 50%; transform: translate(0, -50%); }
+        .card-corner { font-size: 12px; }
+        .card-corner.bottom { transform: rotate(180deg); align-self: flex-end; }
+        
+        .card-back {
+            background: repeating-linear-gradient(
+                45deg, #606dbc, #606dbc 10px, #465298 10px, #465298 20px
+            );
+            color: transparent;
+        }
+
+        /* Scoreboard Table */
+        table { width: 90%; border-collapse: collapse; margin-top: 20px; background: white; color: black; font-size: 14px; }
+        th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+        th { background: #eee; }
+        tr.total-row { background: var(--accent); font-weight: bold; }
+        .winner-hl { color: green; font-weight: bold; }
+        .loser-hl { color: red; font-weight: bold; }
+
+        /* Notification */
+        #toast {
+            position: fixed; bottom: 150px; left: 50%; transform: translateX(-50%);
+            background: rgba(0,0,0,0.8); color: white; padding: 10px 20px;
+            border-radius: 20px; opacity: 0; pointer-events: none; transition: opacity 0.3s;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Orientation Warning -->
+    <div id="portrait-warning">
+        <h1>Please Rotate Your Device</h1>
+        <p>This game is designed for Landscape mode.</p>
+    </div>
+
+    <!-- 1. Start Screen -->
+    <div id="start-screen" class="screen active-screen">
+        <h1>POINT - Card Game</h1>
+        <input type="text" id="username" placeholder="Enter your Name" maxlength="10">
+        <div>
+            <button onclick="createLobby()">Create Lobby</button>
+            <button onclick="showJoinInput()">Join Lobby</button>
+        </div>
+        <div id="join-container" style="display:none; margin-top:10px;">
+            <input type="text" id="room-code-input" placeholder="Enter Room Code">
+            <button onclick="joinLobby()">Connect</button>
+        </div>
+        <p id="connection-status" style="font-size: 12px; color: #aaa;"></p>
+    </div>
+
+    <!-- 2. Lobby Screen -->
+    <div id="lobby-screen" class="screen">
+        <h2>Lobby: <span id="lobby-code-display" style="color:var(--accent)"></span></h2>
+        
+        <div id="host-settings" style="display:none; margin-bottom: 10px; background:rgba(0,0,0,0.2); padding:10px; border-radius:5px;">
+            <label>Late Penalty Score: </label>
+            <input type="number" id="late-penalty-input" value="10" style="width:60px; padding:5px;">
+        </div>
+
+        <ul id="lobby-list"></ul>
+        <div id="lobby-controls">
+            <button id="start-game-btn" style="display:none" onclick="startGame()">Start Game</button>
+        </div>
+        <p>Waiting for host...</p>
+    </div>
+
+    <!-- 3. Game Screen -->
+    <div id="game-screen" class="screen">
+        <div id="game-ui">
+            <div id="top-bar">
+                <span>Room: <span id="game-room-id"></span></span>
+                <span id="round-indicator">Round: 1</span>
+                <span id="turn-indicator" style="color:var(--accent)">Waiting...</span>
+            </div>
+
+            <div id="table-area">
+                <div id="opponents"></div>
+                
+                <!-- Deck -->
+                <div class="deck-placeholder" id="draw-pile" onclick="pickCard('DECK')">
+                    <div class="card card-back" style="position: absolute;"></div>
+                    <span style="z-index: 2; background:rgba(0,0,0,0.7); color:white; padding:2px;">DECK</span>
+                </div>
+
+                <!-- Tray (Discard) -->
+                <div class="deck-placeholder" id="discard-pile" onclick="pickCard('TRAY')">
+                    <span>TRAY<br>(Empty)</span>
+                </div>
+            </div>
+
+            <div id="player-area">
+                <div id="hand-sum-display" style="font-size:12px; margin-bottom:5px; color:#aaa;">Sum: 0</div>
+                <div id="hand-container"></div>
+                <div id="controls">
+                    <button id="btn-show" onclick="actionShow()" class="danger" disabled>SHOW</button>
+                    <button id="btn-discard" onclick="actionDiscard()" disabled>DISCARD SELECTED</button>
+                    <!-- Pick buttons are hidden, clicking decks triggers logic -->
+                    <div id="pick-hint" style="font-size:12px; display:none;">Pick from Deck or Tray</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 4. Scoreboard Screen -->
+    <div id="scoreboard-screen" class="screen">
+        <h2>Scoreboard</h2>
+        <div style="overflow-y: auto; max-height: 70%; width: 100%; display:flex; justify-content:center;">
+            <table id="score-table">
+                <!-- JS Generated -->
+            </table>
+        </div>
+        <div style="margin-top:20px;">
+            <button onclick="nextRound()" id="next-round-btn" style="display:none;">Next Round</button>
+            <button onclick="backToLobby()" style="background:#555">Exit</button>
+        </div>
+    </div>
+
+    <div id="toast">Message</div>
+
+<script>
+/**
+ * POINT GAME LOGIC & NETWORKING
+ * -----------------------------
+ */
+
+// --- GLOBAL STATE ---
+const appState = {
+    myName: '',
+    myId: '',
+    isHost: false,
+    hostConn: null, // For client
+    peers: {}, // For host: map id -> conn
+    
+    // Game Data
+    players: [], // { id, name, hand:[], scoreHistory:[], totalScore:0, active:bool }
+    deck: [],
+    tray: [], // Array of cards
+    turnIndex: 0,
+    round: 1,
+    penaltyScore: 10,
+    gameActive: false,
+    turnPhase: 'DISCARD', // 'DISCARD' or 'PICK'
+    
+    // Local UI State
+    selectedCardIndices: []
+};
+
+// --- CARD UTILITIES ---
+const SUITS = ['♥', '♦', '♣', '♠']; // Hearts, Diamonds, Clubs, Spades
+// Values: A=1, 2-10, J=11, Q=12, K=13, Joker=0
+function createDeck() {
+    let deck = [];
+    // 2 Standard Decks
+    for(let d=0; d<2; d++) {
+        for(let s of SUITS) {
+            for(let n=1; n<=13; n++) {
+                let display = n === 1 ? 'A' : (n===11?'J':(n===12?'Q':(n===13?'K':n)));
+                let val = n; // Face value logic handled in sum calculation usually, but per rules:
+                // Rule: A=1, J=11, Q=12, K=13. 
+                // Color
+                let color = (s === '♥' || s === '♦') ? 'red' : 'black';
+                deck.push({ id: `d${d}-${s}-${n}`, suit: s, val: val, display: display, color: color, isJoker: false });
+            }
+        }
+    }
+    // 5 Jokers
+    for(let j=0; j<5; j++) {
+        deck.push({ id: `joker-${j}`, suit: '★', val: 0, display: 'JK', color: 'purple', isJoker: true });
+    }
+    return shuffle(deck);
+}
+
+function shuffle(array) {
+    for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+    }
+    return array;
+}
+
+function getCardPoints(card) {
+    return card.isJoker ? 0 : card.val;
+}
+
+function calculateHandSum(hand) {
+    return hand.reduce((sum, c) => sum + getCardPoints(c), 0);
+}
+
+// --- PEERJS SETUP ---
+const peer = new Peer(null, { debug: 1 }); // Auto-generate ID
+
+peer.on('open', (id) => {
+    appState.myId = id;
+    document.getElementById('connection-status').innerText = "ID Generated: " + id;
+});
+
+peer.on('connection', (conn) => {
+    // HOST RECEIVING CONNECTION
+    if(!appState.isHost) {
+        conn.close(); // Only host accepts
+        return;
+    }
+    
+    conn.on('data', (data) => handleData(data, conn.peer));
+    conn.on('open', () => {
+        // Add to peers map
+        appState.peers[conn.peer] = conn;
+    });
+    conn.on('close', () => {
+        // Handle disconnect
+        handleDisconnect(conn.peer);
+    });
+});
+
+peer.on('error', (err) => {
+    showToast("Connection Error: " + err.type);
+});
+
+// --- NETWORKING FUNCTIONS ---
+
+function createLobby() {
+    const name = document.getElementById('username').value.trim();
+    if(!name) return showToast("Enter Name");
+    
+    appState.myName = name;
+    appState.isHost = true;
+    appState.players = [{
+        id: appState.myId,
+        name: name,
+        hand: [],
+        scoreHistory: [],
+        totalScore: 0,
+        active: true
+    }];
+    
+    showScreen('lobby-screen');
+    document.getElementById('lobby-code-display').innerText = appState.myId;
+    document.getElementById('start-game-btn').style.display = 'block';
+    document.getElementById('host-settings').style.display = 'block';
+    updateLobbyUI();
+}
+
+function showJoinInput() {
+    document.getElementById('join-container').style.display = 'block';
+}
+
+function joinLobby() {
+    const name = document.getElementById('username').value.trim();
+    const code = document.getElementById('room-code-input').value.trim();
+    if(!name || !code) return showToast("Enter Name and Code");
+    
+    appState.myName = name;
+    appState.isHost = false;
+    
+    const conn = peer.connect(code);
+    appState.hostConn = conn;
+    
+    conn.on('open', () => {
+        showScreen('lobby-screen');
+        document.getElementById('lobby-code-display').innerText = code;
+        // Send join request
+        sendToHost({ type: 'JOIN', name: name });
+    });
+    
+    conn.on('data', (data) => handleData(data));
+    conn.on('close', () => {
+        alert("Disconnected from Host");
+        location.reload();
+    });
+}
+
+function sendToHost(msg) {
+    if(appState.hostConn) appState.hostConn.send(msg);
+}
+
+function broadcast(msg) {
+    Object.values(appState.peers).forEach(conn => {
+        if(conn.open) conn.send(msg);
+    });
+}
+
+// --- DATA HANDLING ---
+
+function handleData(data, senderId) {
+    // HOST LOGIC
+    if(appState.isHost) {
+        switch(data.type) {
+            case 'JOIN':
+                // Check if late join logic needed
+                let catchUpScores = [];
+                // If game in progress (round > 1), fill history
+                if(appState.round > 1) {
+                    for(let i=1; i<appState.round; i++) catchUpScores.push(appState.penaltyScore);
+                }
+                
+                appState.players.push({
+                    id: senderId,
+                    name: data.name,
+                    hand: [],
+                    scoreHistory: catchUpScores,
+                    totalScore: catchUpScores.reduce((a,b)=>a+b, 0),
+                    active: true
+                });
+                
+                syncGameState();
+                break;
+                
+            case 'ACTION_DISCARD':
+                if(senderId !== appState.players[appState.turnIndex].id) return;
+                hostHandleDiscard(data.cardIds);
+                break;
+                
+            case 'ACTION_PICK':
+                if(senderId !== appState.players[appState.turnIndex].id) return;
+                hostHandlePick(data.source); // 'DECK' or 'TRAY'
+                break;
+                
+            case 'ACTION_SHOW':
+                if(senderId !== appState.players[appState.turnIndex].id) return;
+                hostHandleShow(senderId);
+                break;
+        }
+    } 
+    // CLIENT LOGIC
+    else {
+        switch(data.type) {
+            case 'UPDATE_STATE':
+                appState.players = data.players;
+                appState.tray = data.tray; // Top card or last bunch
+                appState.turnIndex = data.turnIndex;
+                appState.round = data.round;
+                appState.turnPhase = data.turnPhase;
+                appState.gameActive = data.gameActive;
+                
+                // Find my hand
+                const me = appState.players.find(p => p.id === appState.myId);
+                if(me) {
+                    // Update local hand
+                    renderGame(me.hand);
+                }
+                
+                if(data.screen) showScreen(data.screen);
+                updateLobbyUI(); // Only updates if on lobby screen
+                break;
+                
+            case 'GAME_OVER':
+                appState.players = data.players;
+                renderScoreboard(data.winnerId, data.loserId, data.lateJoiners);
+                showScreen('scoreboard-screen');
+                break;
+        }
+    }
+}
+
+function handleDisconnect(peerId) {
+    if(appState.isHost) {
+        // Mark inactive or remove?
+        // For simplicity, remove from lobby if not started, else mark inactive
+        if(!appState.gameActive) {
+            appState.players = appState.players.filter(p => p.id !== peerId);
+            syncGameState();
+        } else {
+            // In game disconnect - tricky. Let's kick them.
+            hostKickPlayer(peerId);
+        }
+    }
+}
+
+// --- HOST LOGIC FUNCTIONS ---
+
+function hostKickPlayer(id) {
+    if(id === appState.myId) return; // Can't kick self
+    
+    // Close connection
+    if(appState.peers[id]) {
+        appState.peers[id].close();
+        delete appState.peers[id];
+    }
+    appState.players = appState.players.filter(p => p.id !== id);
+    syncGameState();
+}
+
+function startGame() {
+    if(appState.players.length < 2) return showToast("Need at least 2 players");
+    
+    // Settings
+    const penaltyInput = document.getElementById('late-penalty-input');
+    appState.penaltyScore = parseInt(penaltyInput.value) || 10;
+    
+    appState.round = 1;
+    appState.gameActive = true;
+    startRound();
+}
+
+function startRound() {
+    appState.deck = createDeck();
+    appState.tray = [];
+    appState.turnIndex = (appState.round - 1) % appState.players.length; // Rotate starter
+    appState.turnPhase = 'DISCARD'; // Rule: Discard first
+    
+    // Deal 7 cards
+    appState.players.forEach(p => {
+        p.hand = appState.deck.splice(0, 7);
+    });
+    
+    // Note: Rule says "Remaining shuffled cards in center". 
+    // Usually a discard pile needs a starter, but rule says:
+    // "first player cannot choose card from tray... top card picked... put to tray"
+    // So we put one card in tray initially so there is something, 
+    // OR we let first player Discard (Phase 1), then Pick (Phase 2).
+    // If first player discards to empty tray, then picks from deck.
+    // Wait, the prompt says: "default top card was picked from remaining... and putted to tray so first player gets 2 options".
+    // So:
+    appState.tray.push(appState.deck.shift());
+
+    syncGameState();
+    broadcast({ type: 'UPDATE_STATE', ...getPublicState(), screen: 'game-screen' });
+    
+    // Host UI update
+    showScreen('game-screen');
+    const me = appState.players.find(p => p.id === appState.myId);
+    renderGame(me.hand);
+}
+
+function hostHandleDiscard(cardIds) {
+    const player = appState.players[appState.turnIndex];
+    
+    // Validate: Must be same value
+    const cardsToDiscard = player.hand.filter(c => cardIds.includes(c.id));
+    if(cardsToDiscard.length === 0) return;
+    
+    const firstVal = cardsToDiscard[0].val;
+    const allSame = cardsToDiscard.every(c => c.val === firstVal); // Suits don't matter, just value
+    
+    if(!allSame) return; // Invalid move logic handled on client side mostly, but double check
+    
+    // Remove from hand
+    player.hand = player.hand.filter(c => !cardIds.includes(c.id));
+    
+    // Add to tray
+    // Note: The tray keeps history of "bunches". 
+    // Current Tray logic for picking: "pick one card... from tray which is put by previous person"
+    // So we push this bunch as a unit or individual? 
+    // Visuals usually show top card. We will just push them all to the array.
+    // The previous player's output is at the end of the array.
+    cardsToDiscard.forEach(c => appState.tray.push(c));
+    
+    appState.turnPhase = 'PICK';
+    syncGameState();
+}
+
+function hostHandlePick(source) {
+    const player = appState.players[appState.turnIndex];
+    let newCard = null;
+    
+    if(source === 'DECK') {
+        if(appState.deck.length === 0) {
+            // Reshuffle tray (keep top)
+            if(appState.tray.length > 1) {
+                const top = appState.tray.pop();
+                const rest = appState.tray;
+                appState.tray = [top];
+                appState.deck = shuffle(rest);
+            } else {
+                return; // No cards left anywhere! Rare.
+            }
+        }
+        newCard = appState.deck.shift();
+    } else if (source === 'TRAY') {
+        // Pick the top card of the tray (which was put by previous player)
+        // User rule: "pick one card... from tray which is put by previous person"
+        // Also: "if previous put 3 queens... can pick that one queen"
+        if(appState.tray.length > 0) {
+            newCard = appState.tray.pop();
+        } else {
+            return; // Empty tray
+        }
+    }
+    
+    if(newCard) {
+        player.hand.push(newCard);
+        
+        // Next Turn
+        appState.turnIndex = (appState.turnIndex + 1) % appState.players.length;
+        appState.turnPhase = 'DISCARD';
+        syncGameState();
+    }
+}
+
+function hostHandleShow(playerId) {
+    const player = appState.players.find(p => p.id === playerId);
+    const sum = calculateHandSum(player.hand);
+    
+    // Validation: Sum <= 5
+    if(sum > 5) return; // Should not happen if client disabled button
+    
+    // Logic for Round End
+    // 1. Calculate all sums
+    let results = appState.players.map(p => ({
+        id: p.id,
+        sum: calculateHandSum(p.hand),
+        name: p.name
+    }));
+    
+    // 2. Find lowest sum
+    let lowestSum = Math.min(...results.map(r => r.sum));
+    
+    // 3. Determine Winner(s) and Loser
+    // Scenario: Did the Show-er win?
+    // Show-er sum is 'sum'.
+    
+    let roundScores = {}; // map id -> points
+    let winners = results.filter(r => r.sum === lowestSum);
+    let showerIsWinner = (sum === lowestSum);
+    
+    let roundWinnerIds = [];
+    let roundLoserId = null; // For visual highlighting
+    
+    if(showerIsWinner) {
+        // Clean Win or Tie Win (0-0 or 4-4)
+        // Winners get 0
+        winners.forEach(w => roundScores[w.id] = 0);
+        roundWinnerIds = winners.map(w => w.id);
+        
+        // Others get their sum
+        results.forEach(r => {
+            if(r.sum !== lowestSum) roundScores[r.id] = r.sum;
+        });
+    } else {
+        // WRONG SHOW
+        roundLoserId = playerId;
+        // Show-er gets 30 * (count of people with <= sum than him) ??
+        // Rule: "30 * (count number of players with lower sum or same sum)"
+        // Technically, everyone who beat him.
+        let betterOrEqualCount = results.filter(r => r.sum <= sum && r.id !== playerId).length;
+        roundScores[playerId] = 30 * betterOrEqualCount;
+        
+        // Actual winners get 0
+        winners.forEach(w => roundScores[w.id] = 0);
+        roundWinnerIds = winners.map(w => w.id);
+        
+        // Remaining (neither winner nor wrong shower)
+        results.forEach(r => {
+            if(r.id !== playerId && r.sum !== lowestSum) {
+                roundScores[r.id] = r.sum;
+            }
+        });
+    }
+    
+    // Apply scores
+    appState.players.forEach(p => {
+        let pts = roundScores[p.id];
+        p.scoreHistory.push(pts);
+        p.totalScore += pts;
+    });
+    
+    // Send Game Over
+    broadcast({
+        type: 'GAME_OVER',
+        players: appState.players,
+        winnerId: roundWinnerIds,
+        loserId: roundLoserId
+    });
+    
+    // Update Host UI
+    renderScoreboard(roundWinnerIds, roundLoserId);
+    showScreen('scoreboard-screen');
+    document.getElementById('next-round-btn').style.display = 'block';
+}
+
+function nextRound() {
+    appState.round++;
+    startRound();
+}
+
+function getPublicState() {
+    // Hide hands of others
+    const publicPlayers = appState.players.map(p => ({
+        id: p.id,
+        name: p.name,
+        handCount: p.hand.length,
+        // Don't send hand data of others
+        hand: (p.id === appState.myId) ? p.hand : [], 
+        totalScore: p.totalScore
+    }));
+    
+    // Last card in tray (for display)
+    let trayTop = null; 
+    if(appState.tray.length > 0) trayTop = appState.tray[appState.tray.length - 1];
+    
+    return {
+        players: appState.players, // NOTE: In a real secure app, sanitize this. Here we trust friends.
+        tray: appState.tray,
+        turnIndex: appState.turnIndex,
+        round: appState.round,
+        turnPhase: appState.turnPhase,
+        gameActive: appState.gameActive
+    };
+}
+
+function syncGameState() {
+    // Send full state to everyone (PeerJS handles JSON serialization)
+    // We send the full players array so clients can render their own hand
+    // Clients filter what they show.
+    broadcast({
+        type: 'UPDATE_STATE',
+        players: appState.players,
+        tray: appState.tray,
+        turnIndex: appState.turnIndex,
+        round: appState.round,
+        turnPhase: appState.turnPhase,
+        gameActive: appState.gameActive
+    });
+    
+    // Host UI update
+    const me = appState.players.find(p => p.id === appState.myId);
+    if(me) renderGame(me.hand);
+    updateLobbyUI();
+}
+
+// --- UI RENDERING ---
+
+function showScreen(id) {
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active-screen'));
+    document.getElementById(id).classList.add('active-screen');
+}
+
+function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.innerText = msg;
+    t.style.opacity = 1;
+    setTimeout(() => t.style.opacity = 0, 3000);
+}
+
+function updateLobbyUI() {
+    const list = document.getElementById('lobby-list');
+    list.innerHTML = '';
+    appState.players.forEach(p => {
+        let li = document.createElement('li');
+        li.innerHTML = `<span>${p.name}</span>`;
+        
+        if(appState.isHost && p.id !== appState.myId) {
+            let kickBtn = document.createElement('button');
+            kickBtn.innerText = 'Kick';
+            kickBtn.style.fontSize = '10px';
+            kickBtn.style.padding = '2px 5px';
+            kickBtn.className = 'danger';
+            kickBtn.onclick = () => hostKickPlayer(p.id);
+            li.appendChild(kickBtn);
+        }
+        list.appendChild(li);
+    });
+}
+
+function renderGame(myHand) {
+    document.getElementById('game-room-id').innerText = appState.players[0].id; // Host ID
+    document.getElementById('round-indicator').innerText = "Round: " + appState.round;
+    
+    const currentPlayer = appState.players[appState.turnIndex];
+    const isMyTurn = currentPlayer.id === appState.myId;
+    
+    // Status text
+    const turnText = document.getElementById('turn-indicator');
+    if(isMyTurn) {
+        turnText.innerText = "YOUR TURN: " + appState.turnPhase;
+        turnText.style.color = "var(--accent)";
+    } else {
+        turnText.innerText = currentPlayer.name + "'s Turn";
+        turnText.style.color = "white";
+    }
+    
+    // Opponents
+    const oppContainer = document.getElementById('opponents');
+    oppContainer.innerHTML = '';
+    appState.players.forEach(p => {
+        if(p.id !== appState.myId) {
+            let div = document.createElement('div');
+            div.className = 'opponent';
+            if(p.id === currentPlayer.id) div.classList.add('active-turn');
+            div.innerHTML = `<div>${p.name}</div><div style="font-size:16px">🂠 ${p.hand.length || p.handCount}</div>`;
+            oppContainer.appendChild(div);
+        }
+    });
+    
+    // Tray (Discard Pile)
+    const trayEl = document.getElementById('discard-pile');
+    if(appState.tray.length > 0) {
+        let topCard = appState.tray[appState.tray.length - 1];
+        trayEl.innerHTML = renderCardHTML(topCard);
+        // Hint text if picking
+        if(isMyTurn && appState.turnPhase === 'PICK') {
+            trayEl.style.borderColor = 'var(--accent)';
+        } else {
+            trayEl.style.borderColor = 'rgba(255,255,255,0.5)';
+        }
+    } else {
+        trayEl.innerHTML = `<span>TRAY<br>(Empty)</span>`;
+    }
+    
+    // Deck
+    const deckEl = document.getElementById('draw-pile');
+    if(isMyTurn && appState.turnPhase === 'PICK') {
+        deckEl.style.borderColor = 'var(--accent)';
+    } else {
+        deckEl.style.borderColor = 'rgba(255,255,255,0.5)';
+    }
+    
+    // My Hand
+    const handContainer = document.getElementById('hand-container');
+    handContainer.innerHTML = '';
+    
+    // Sorting hand for better UX? Usually players like to sort. 
+    // Auto-sorting by value
+    myHand.sort((a,b) => a.val - b.val);
+    
+    myHand.forEach((card, idx) => {
+        let cDiv = document.createElement('div');
+        cDiv.className = `card ${card.color}`;
+        cDiv.innerHTML = renderCardInner(card);
+        cDiv.onclick = () => toggleCardSelect(idx);
+        
+        if(appState.selectedCardIndices.includes(idx)) {
+            cDiv.classList.add('selected');
+        }
+        
+        handContainer.appendChild(cDiv);
+    });
+    
+    // Controls
+    const btnDiscard = document.getElementById('btn-discard');
+    const btnShow = document.getElementById('btn-show');
+    const pickHint = document.getElementById('pick-hint');
+    const handSumDisp = document.getElementById('hand-sum-display');
+    
+    const currentSum = calculateHandSum(myHand);
+    handSumDisp.innerText = "Sum: " + currentSum;
+    
+    // Reset states
+    btnDiscard.disabled = true;
+    btnShow.disabled = true;
+    pickHint.style.display = 'none';
+    
+    if(isMyTurn) {
+        if(appState.turnPhase === 'DISCARD') {
+            // Check Discard logic
+            if(appState.selectedCardIndices.length > 0) {
+                // Check if all selected have same value
+                const selectedCards = appState.selectedCardIndices.map(i => myHand[i]);
+                const firstVal = selectedCards[0].val;
+                const allSame = selectedCards.every(c => c.val === firstVal);
+                if(allSame) btnDiscard.disabled = false;
+            }
+            // Check Show logic (Only at start of turn, usually before discard? 
+            // Rules say "before putting user's cards". Which is this phase.
+            if(currentSum <= 5) btnShow.disabled = false;
+        } 
+        else if (appState.turnPhase === 'PICK') {
+            pickHint.style.display = 'block';
+        }
+    }
+}
+
+function renderCardHTML(card) {
+    return `<div class="card ${card.color}" style="position:absolute;">${renderCardInner(card)}</div>`;
+}
+
+function renderCardInner(card) {
+    return `
+        <div class="card-corner">${card.display} <br> ${card.suit}</div>
+        <div class="card-center">${card.suit}</div>
+        <div class="card-corner bottom">${card.display} <br> ${card.suit}</div>
+    `;
+}
+
+function toggleCardSelect(idx) {
+    // Only allow selection in Discard phase
+    const me = appState.players.find(p => p.id === appState.myId);
+    const isMyTurn = appState.players[appState.turnIndex].id === appState.myId;
+    
+    if(!isMyTurn || appState.turnPhase !== 'DISCARD') return;
+    
+    if(appState.selectedCardIndices.includes(idx)) {
+        appState.selectedCardIndices = appState.selectedCardIndices.filter(i => i !== idx);
+    } else {
+        // Validation: Can only select multiple if same value
+        // If current selection is empty, just add
+        if(appState.selectedCardIndices.length === 0) {
+            appState.selectedCardIndices.push(idx);
+        } else {
+            // Check value match
+            const firstIdx = appState.selectedCardIndices[0];
+            if(me.hand[firstIdx].val === me.hand[idx].val) {
+                appState.selectedCardIndices.push(idx);
+            } else {
+                // If different value, usually in games, tapping a new value resets selection to that new card
+                appState.selectedCardIndices = [idx];
+            }
+        }
+    }
+    renderGame(me.hand);
+}
+
+// --- PLAYER ACTIONS ---
+
+function actionDiscard() {
+    const me = appState.players.find(p => p.id === appState.myId);
+    const selectedIds = appState.selectedCardIndices.map(i => me.hand[i].id);
+    
+    if(appState.isHost) {
+        hostHandleDiscard(selectedIds);
+    } else {
+        sendToHost({ type: 'ACTION_DISCARD', cardIds: selectedIds });
+    }
+    appState.selectedCardIndices = []; // Clear selection
+}
+
+function pickCard(source) {
+    // Check phase
+    const isMyTurn = appState.players[appState.turnIndex].id === appState.myId;
+    if(!isMyTurn || appState.turnPhase !== 'PICK') return;
+    
+    if(appState.isHost) {
+        hostHandlePick(source);
+    } else {
+        sendToHost({ type: 'ACTION_PICK', source: source });
+    }
+}
+
+function actionShow() {
+    if(appState.isHost) {
+        hostHandleShow(appState.myId);
+    } else {
+        sendToHost({ type: 'ACTION_SHOW' });
+    }
+}
+
+// --- SCOREBOARD ---
+
+function renderScoreboard(winnerIds, loserId, lateJoiners) {
+    const table = document.getElementById('score-table');
+    table.innerHTML = '';
+    
+    // Header
+    const thead = document.createElement('tr');
+    thead.innerHTML = `<th>Round</th>`;
+    appState.players.forEach(p => {
+        let th = document.createElement('th');
+        th.innerText = p.name;
+        thead.appendChild(th);
+    });
+    table.appendChild(thead);
+    
+    // Rows
+    const rounds = appState.round; // current round ended
+    for(let r=0; r<rounds; r++) {
+        let tr = document.createElement('tr');
+        tr.innerHTML = `<td>${r+1}</td>`;
+        
+        appState.players.forEach(p => {
+            let td = document.createElement('td');
+            let score = p.scoreHistory[r];
+            td.innerText = (score !== undefined) ? score : '-';
+            
+            // Highlight specific round results (only for the last round just played)
+            if(r === rounds - 1) {
+                // Checking if this player was a winner or loser in this round
+                // Note: winnerIds passed to function might differ from state if re-rendering?
+                // We use logic based on score: 0 is usually winner unless 0-0 tie.
+                // loserId is explicit.
+            }
+            tr.appendChild(td);
+        });
+        table.appendChild(tr);
+    }
+    
+    // Total Row
+    let totalTr = document.createElement('tr');
+    totalTr.className = 'total-row';
+    totalTr.innerHTML = `<td>TOTAL</td>`;
+    appState.players.forEach(p => {
+        let td = document.createElement('td');
+        td.innerText = p.totalScore;
+        totalTr.appendChild(td);
+    });
+    table.appendChild(totalTr);
+}
+
+function backToLobby() {
+    // Only works if host restarts? or simple reload
+    if(confirm("Exit game?")) location.reload();
+}
+
+</script>
+</body>
+</html>
