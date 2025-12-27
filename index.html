@@ -211,7 +211,7 @@
 
     <!-- 2. Lobby Screen -->
     <div id="lobby-screen" class="screen">
-        <h2 style="padding-top: 10%;">Lobby: <span id="lobby-code-display" style="color:var(--accent)"></span></h2>
+        <h2 style="padding-top: 10%;">Lobby: <span id="lobby-code-display" style="color:var(--accent)"></span><button onclick="copyText()">Copy Text</button></h2>
         
         <div id="host-settings" style="display:none; margin-bottom: 10px; background:rgba(0,0,0,0.2); padding:0px; border-radius:5px;">
             <label>Late Penalty Score: </label>
@@ -1050,6 +1050,24 @@ function backToLobby() {
     // Only works if host restarts? or simple reload
     if(confirm("Exit game?")) location.reload();
 }
+function copyText() {
+  // 1. Get the text element by its ID
+  const textToCopy = document.getElementById("lobby-code-display");
+
+  // 2. Use the Clipboard API to write the text value
+  navigator.clipboard.writeText(textToCopy.innerText)
+    .then(() => {
+      // 3. (Optional) Show a success message
+      
+      showToast('Text copied successfully!');
+    })
+    .catch(err => {
+      // 4. (Optional) Handle errors
+      console.error('Failed to copy text: ', err);
+      showToast("Failed to copy text.");
+    });
+}
+
 
 </script>
 </body>
