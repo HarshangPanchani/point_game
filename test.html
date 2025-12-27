@@ -1,0 +1,1055 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>POINT - Card Game</title>
+    <!-- PeerJS for Multiplayer -->
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #2E7D32; /* Felt Green */
+            --card-width: 60px;
+            --card-height: 84px;
+            --text-color: white;
+            --accent: #FFD700;
+            --danger: #ff4444;
+        }
+
+        * { box-sizing: border-box; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+        body {
+            margin: 0; padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+        }
+
+        /* Landscape Warning */
+        #portrait-warning {
+            display: none;
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: #1a1a1a;
+            z-index: 9999;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 20px;
+        }
+        @media (orientation: portrait) {
+            #portrait-warning { display: flex; }
+        }
+
+        /* Screens */
+        .screen {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            width: 100%; height: 100%;
+            position: absolute; top: 0; left: 0;
+            overflow-y:auto;
+        }
+        .active-screen { display: flex; }
+
+        /* UI Elements */
+        input, button {
+            padding: 10px 15px;
+            margin: 10px;
+            border-radius: 5px;
+            border: none;
+            font-size: 16px;
+        }
+        button { cursor: pointer; background: var(--accent); color: #000; font-weight: bold; box-shadow: 0 4px 0 #b39700; transition: all 0.1s;}
+        button:active { transform: translateY(4px); box-shadow: none; }
+        button:disabled { background: #ccc; cursor: not-allowed; box-shadow: none; }
+        button.danger { background: var(--danger); color: white; box-shadow: 0 4px 0 #cc0000; }
+        input { color: #000; text-align: center;}
+
+        /* Lobby */
+        #lobby-list {
+            list-style: none; padding: 0; width: 300px;
+            background: rgba(0,0,0,0.3); border-radius: 10px;
+        }
+        #lobby-list li {
+            padding: 10px; border-bottom: 1px solid rgba(255,255,255,0.1);
+            display: flex; justify-content: space-between; align-items: center;
+        }
+
+        /* Game Layout */
+        #game-ui {
+            width: 100%; height: 100%;
+            display: grid;
+            grid-template-rows: 40px 1fr 140px;
+        }
+
+        /* Top Bar */
+        #top-bar {
+            background: rgba(0,0,0,0.5);
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 0 20px; font-size: 14px;
+        }
+
+        /* Center Table */
+        #table-area {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+        }
+        
+        /* Opponents */
+        #opponents {
+            position: absolute; top: 10px; width: 100%;
+            display: flex; justify-content: center; gap: 20px;
+        }
+        .opponent {
+            background: rgba(0,0,0,0.4);
+            padding: 5px 10px; border-radius: 10px;
+            text-align: center; font-size: 12px;
+            opacity: 0.7;
+            border: 2px solid transparent;
+        }
+        .opponent.active-turn { border: 2px solid var(--accent); opacity: 1; background: rgba(0,0,0,0.7); }
+        .opponent.disconnected { opacity: 0.3; border: 1px dashed red; }
+
+        /* Decks */
+        .deck-placeholder {
+            width: var(--card-width); height: var(--card-height);
+            border: 2px dashed rgba(255,255,255,0.5);
+            border-radius: 5px; margin: 0 20px;
+            display: flex; justify-content: center; align-items: center;
+            position: relative;
+            background: rgba(0,0,0,0.1);
+            transition: transform 0.1s;
+        }
+        .deck-placeholder:active { transform: scale(0.95); }
+        .deck-placeholder span { font-size: 10px; text-align: center; }
+
+        /* Player Hand */
+        #player-area {
+            background: rgba(0,0,0,0.8);
+            display: flex; flex-direction: column;
+            align-items: center;
+            padding-bottom: 5px;
+        }
+        #hand-container {
+            display: flex;
+            justify-content: center;
+            margin-top: -30px; /* Overlap effect */
+            height: 90px;
+            width: 100%;
+            overflow-x: auto; /* Allow scrolling if too many cards */
+        }
+        #controls {
+            display: flex; gap: 10px; margin-top: 5px;
+        }
+
+        /* Card Visuals */
+        .card {
+            width: var(--card-width); height: var(--card-height);
+            background: white; color: black;
+            border-radius: 5px;
+            display: flex; flex-direction: column;
+            justify-content: space-between;
+            padding: 2px 5px;
+            box-shadow: 2px 2px 5px rgba(0,0,0,0.5);
+            font-weight: bold; font-family: courier, monospace;
+            cursor: pointer;
+            position: relative;
+            margin: 0 2px;
+            transition: transform 0.2s, border 0.2s;
+            flex-shrink: 0; /* Prevent squishing */
+        }
+        .card.selected { transform: translateY(-20px); border: 3px solid var(--accent); z-index: 10; }
+        .card.red { color: #d40000; }
+        .card.black { color: #000; }
+        .card-center { font-size: 24px; align-self: center; position: absolute; top: 50%; transform: translate(0, -50%); }
+        .card-corner { font-size: 12px; line-height: 1; }
+        .card-corner.bottom { transform: rotate(180deg); align-self: flex-end; }
+        
+        .card-back {
+            background: repeating-linear-gradient(
+                45deg, #606dbc, #606dbc 10px, #465298 10px, #465298 20px
+            );
+            color: transparent;
+        }
+
+        /* Scoreboard Table */
+        table { width: 90%; border-collapse: collapse; margin-top: 20px; background: white; color: black; font-size: 14px; }
+        th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+        th { background: #eee; }
+        tr.total-row { background: var(--accent); font-weight: bold; }
+        .winner-hl { color: green; font-weight: bold; }
+        .loser-hl { color: red; font-weight: bold; }
+
+        /* Notification */
+        #toast {
+            position: fixed; bottom: 50%; left: 50%; transform: translate(-50%, 50%);
+            background: rgba(0,0,0,0.9); color: white; padding: 15px 30px;
+            border-radius: 30px; opacity: 0; pointer-events: none; transition: opacity 0.3s;
+            text-align: center; z-index: 10000;
+        }
+        
+        /* Copy Button specific */
+        .copy-btn {
+            background: transparent; border: 1px solid var(--accent); color: var(--accent);
+            padding: 5px 10px; font-size: 12px; margin-left: 10px; box-shadow: none;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Orientation Warning -->
+    <div id="portrait-warning">
+        <h1>Please Rotate Your Device</h1>
+        <p>This game is designed for Landscape mode.</p>
+    </div>
+
+    <!-- 1. Start Screen -->
+    <div id="start-screen" class="screen active-screen">
+        <h1 style="color:var(--accent); font-size: 40px; margin-bottom: 5px;">POINT</h1>
+        <p style="margin-top:0; color:#ccc;">The Gujarat Style Card Game</p>
+        
+        <input type="text" id="username" placeholder="Enter your Name" maxlength="10">
+        
+        <div style="display:flex; flex-direction:row;">
+            <button onclick="createLobby()">Create Game</button>
+            <button onclick="toggleJoinInput()">Join Game</button>
+        </div>
+        
+        <div id="join-container" style="display:none; margin-top:10px; text-align:center;">
+            <input type="text" id="room-code-input" placeholder="Paste Code Here" style="width: 150px;">
+            <br>
+            <button onclick="joinLobby()">Connect</button>
+        </div>
+        <p id="connection-status" style="font-size: 12px; color: #aaa; margin-top:20px;"></p>
+    </div>
+
+    <!-- 2. Lobby Screen -->
+    <div id="lobby-screen" class="screen">
+        <h2 style="padding-top: 20px;">Lobby</h2>
+        
+        <div style="background:rgba(255,255,255,0.1); padding: 15px; border-radius: 10px; text-align: center;">
+            <span style="font-size: 14px; color:#ccc;">SHARE THIS LINK:</span><br>
+            <div style="margin: 10px 0; font-weight: bold; font-size: 18px; color: var(--accent); word-break: break-all;" id="lobby-link-display">...</div>
+            <button onclick="copyLink()" class="copy-btn">COPY LINK</button>
+        </div>
+        
+        <div id="host-settings" style="display:none; margin-top: 15px; background:rgba(0,0,0,0.2); padding:10px; border-radius:5px;">
+            <label>Late Penalty Score: </label>
+            <input type="number" id="late-penalty-input" value="10" style="width:60px; padding:5px;">
+        </div>
+
+        <h3>Players</h3>
+        <ul id="lobby-list"></ul>
+        
+        <div id="lobby-controls" style="margin-top: 20px;">
+            <button id="start-game-btn" style="display:none" onclick="startGame()">START GAME</button>
+        </div>
+        <p id="lobby-status-text">Waiting for host...</p>
+    </div>
+
+    <!-- 3. Game Screen -->
+    <div id="game-screen" class="screen">
+        <div id="game-ui">
+            <div id="top-bar">
+                <span>Room: <span id="game-room-id"></span></span>
+                <span id="round-indicator">Round: 1</span>
+                <span id="turn-indicator" style="color:var(--accent)">Waiting...</span>
+            </div>
+
+            <div id="table-area">
+                <div id="opponents"></div>
+                
+                <!-- Deck -->
+                <div class="deck-placeholder" id="draw-pile" onclick="pickCard('DECK')">
+                    <div class="card card-back" style="position: absolute;"></div>
+                    <span style="z-index: 2; background:rgba(0,0,0,0.7); color:white; padding:2px;">DECK</span>
+                </div>
+
+                <!-- Tray (Discard) -->
+                <div class="deck-placeholder" id="discard-pile" onclick="pickCard('TRAY')">
+                    <span>TRAY<br>(Empty)</span>
+                </div>
+            </div>
+
+            <div id="player-area">
+                <div id="hand-sum-display" style="font-size:12px; margin-bottom:5px; color:#aaa;">Sum: 0</div>
+                <div id="hand-container"></div>
+                <div id="controls">
+                    <button id="btn-show" onclick="actionShow()" class="danger" disabled>SHOW</button>
+                    <button id="btn-discard" onclick="actionDiscard()" disabled>DISCARD SELECTED</button>
+                    <div id="pick-hint" style="font-size:14px; font-weight:bold; color:var(--accent); display:none; align-self:center;">Pick from Deck or Tray</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 4. Scoreboard Screen -->
+    <div id="scoreboard-screen" class="screen">
+        <h2>Scoreboard</h2>
+        <div style="overflow-y: auto; max-height: 60%; width: 100%; display:flex; justify-content:center;">
+            <table id="score-table">
+                <!-- JS Generated -->
+            </table>
+        </div>
+        <div style="margin-top:20px;">
+            <button onclick="nextRound()" id="next-round-btn" style="display:none;">Next Round</button>
+            <button onclick="backToLobby()" style="background:#555">Exit</button>
+        </div>
+    </div>
+
+    <div id="toast">Message</div>
+
+<script>
+/**
+ * POINT - ROBUST MULTIPLAYER LOGIC
+ * Includes Reconnection Support for Mobile Tab Switching
+ */
+
+// --- UTILS ---
+function generateId() { return Math.random().toString(36).substr(2, 6).toUpperCase(); }
+function getUrlParam(name) { 
+    const urlParams = new URLSearchParams(window.location.search);
+    return urlParams.get(name);
+}
+
+// --- GLOBAL STATE ---
+const appState = {
+    // Identity
+    mySessionId: sessionStorage.getItem('point_sess_id') || generateId(), // Persistent ID for reconnect
+    myName: sessionStorage.getItem('point_name') || '',
+    
+    // Networking
+    peer: null,
+    hostId: null,
+    isHost: false,
+    hostConn: null, // Client's connection to host
+    peers: {}, // Host's map of SessionID -> Connection
+    heartbeatInterval: null,
+
+    // Game Data
+    players: [], 
+    deck: [],
+    tray: [],
+    turnIndex: 0,
+    round: 1,
+    penaltyScore: 10,
+    gameActive: false,
+    turnPhase: 'DISCARD', 
+    
+    // Local UI State
+    selectedCardIndices: []
+};
+
+sessionStorage.setItem('point_sess_id', appState.mySessionId);
+
+// --- INITIALIZATION ---
+window.onload = () => {
+    if(appState.myName) document.getElementById('username').value = appState.myName;
+    
+    // Check if joining via link
+    const joinCode = getUrlParam('join');
+    if(joinCode) {
+        document.getElementById('room-code-input').value = joinCode;
+        toggleJoinInput();
+        showToast("Link detected. Enter name to join.");
+    }
+};
+
+function toggleJoinInput() {
+    document.getElementById('join-container').style.display = 'block';
+}
+
+// --- PEERJS & CONNECTION LOGIC ---
+
+function initPeer(customId = null) {
+    return new Promise((resolve, reject) => {
+        if(appState.peer) appState.peer.destroy();
+        
+        // Mobile-friendly config (Use public server, but standard config)
+        appState.peer = new Peer(customId, {
+            debug: 1,
+            config: {'iceServers': [
+                { url: 'stun:stun.l.google.com:19302' },
+                { url: 'stun:global.stun.twilio.com:3478' }
+            ]} 
+        });
+
+        appState.peer.on('open', (id) => {
+            console.log("My Peer ID:", id);
+            resolve(id);
+        });
+
+        appState.peer.on('error', (err) => {
+            console.error(err);
+            if(err.type === 'unavailable-id') {
+                // Retry with new ID if collision
+                if(appState.isHost) createLobby(); 
+            } else {
+                showToast("Connection Error. Retrying...");
+            }
+        });
+
+        appState.peer.on('connection', (conn) => {
+            if(!appState.isHost) { conn.close(); return; } // Only host accepts
+            setupHostConnection(conn);
+        });
+    });
+}
+
+// --- HOST LOGIC ---
+
+async function createLobby() {
+    const name = document.getElementById('username').value.trim();
+    if(!name) return showToast("Enter Name");
+    
+    appState.myName = name;
+    sessionStorage.setItem('point_name', name);
+    appState.isHost = true;
+    
+    // Create random room ID
+    const roomId = generateId();
+    await initPeer(roomId);
+    appState.hostId = roomId;
+
+    // Add Self
+    appState.players = [{
+        sessionId: appState.mySessionId, // KEY: Use SessionID, not PeerID
+        name: name,
+        hand: [],
+        scoreHistory: [],
+        totalScore: 0,
+        connected: true
+    }];
+    
+    setupUIForHost(roomId);
+}
+
+function setupHostConnection(conn) {
+    conn.on('data', (data) => {
+        // Heartbeat
+        if(data.type === 'PING') {
+            conn.send({type: 'PONG'});
+            return;
+        }
+        
+        if(data.type === 'JOIN') {
+            handlePlayerJoin(data, conn);
+        } else {
+            // Game Actions
+            handleGameAction(data, data.sessionId); // Pass stored sessionId
+        }
+    });
+
+    conn.on('close', () => {
+        // Determine who disconnected based on conn.peer is hard, 
+        // relying on heartbeat timeout is better for mobile
+    });
+}
+
+function handlePlayerJoin(data, conn) {
+    const existingPlayer = appState.players.find(p => p.sessionId === data.sessionId);
+    
+    if(existingPlayer) {
+        // RECONNECTION
+        console.log(`Player ${existingPlayer.name} reconnected`);
+        existingPlayer.connected = true;
+        // Update connection reference
+        appState.peers[data.sessionId] = conn; 
+        syncGameState();
+        showToast(`${existingPlayer.name} reconnected!`);
+    } else {
+        // NEW PLAYER
+        if(appState.gameActive && appState.round > 1) {
+             // Late join logic
+             let catchUpScores = [];
+             for(let i=1; i<appState.round; i++) catchUpScores.push(appState.penaltyScore);
+             
+             appState.players.push({
+                sessionId: data.sessionId,
+                name: data.name,
+                hand: [],
+                scoreHistory: catchUpScores,
+                totalScore: catchUpScores.reduce((a,b)=>a+b, 0),
+                connected: true
+            });
+        } else {
+            appState.players.push({
+                sessionId: data.sessionId,
+                name: data.name,
+                hand: [],
+                scoreHistory: [],
+                totalScore: 0,
+                connected: true
+            });
+        }
+        appState.peers[data.sessionId] = conn;
+        syncGameState();
+    }
+}
+
+// --- CLIENT LOGIC ---
+
+async function joinLobby() {
+    const name = document.getElementById('username').value.trim();
+    let code = document.getElementById('room-code-input').value.trim().toUpperCase();
+    
+    if(!name || !code) return showToast("Enter Name and Code");
+    
+    appState.myName = name;
+    sessionStorage.setItem('point_name', name);
+    appState.isHost = false;
+    appState.hostId = code;
+
+    await initPeer(); // Get ephemeral ID
+    connectToHost();
+}
+
+function connectToHost() {
+    if(appState.hostConn) appState.hostConn.close();
+    
+    const conn = appState.peer.connect(appState.hostId, { reliable: true });
+    appState.hostConn = conn;
+
+    conn.on('open', () => {
+        document.getElementById('connection-status').innerText = "Connected!";
+        // Send Join with Session ID (Critical for reconnect)
+        conn.send({ 
+            type: 'JOIN', 
+            name: appState.myName, 
+            sessionId: appState.mySessionId 
+        });
+        startHeartbeat();
+    });
+
+    conn.on('data', (data) => {
+        if(data.type === 'PONG') return; // Heartbeat response
+        handleClientData(data);
+    });
+
+    conn.on('close', () => {
+        showToast("Disconnected. Attempting reconnect...");
+        stopHeartbeat();
+        setTimeout(connectToHost, 2000); // Auto Retry
+    });
+    
+    conn.on('error', () => {
+        setTimeout(connectToHost, 2000);
+    });
+}
+
+// --- HEARTBEAT SYSTEM (Fixes Mobile Timeout) ---
+function startHeartbeat() {
+    stopHeartbeat();
+    appState.heartbeatInterval = setInterval(() => {
+        if(appState.hostConn && appState.hostConn.open) {
+            appState.hostConn.send({type: 'PING'});
+        }
+    }, 2000);
+}
+
+function stopHeartbeat() {
+    if(appState.heartbeatInterval) clearInterval(appState.heartbeatInterval);
+}
+
+// --- GAME LOGIC (Host Side) ---
+
+function handleGameAction(data, sessionId) {
+    if(!appState.isHost) return;
+    
+    // Verify it's the correct turn
+    const currentPlayer = appState.players[appState.turnIndex];
+    if(currentPlayer.sessionId !== sessionId) return;
+
+    switch(data.type) {
+        case 'ACTION_DISCARD':
+            hostHandleDiscard(data.cardIds);
+            break;
+        case 'ACTION_PICK':
+            hostHandlePick(data.source);
+            break;
+        case 'ACTION_SHOW':
+            hostHandleShow(sessionId);
+            break;
+    }
+}
+
+function startGame() {
+    if(appState.players.length < 2) return showToast("Need at least 2 players");
+    appState.penaltyScore = parseInt(document.getElementById('late-penalty-input').value) || 10;
+    appState.round = 1;
+    appState.gameActive = true;
+    startRound();
+}
+
+function startRound() {
+    appState.deck = createDeck();
+    appState.tray = [];
+    appState.turnIndex = (appState.round - 1) % appState.players.length; 
+    appState.turnPhase = 'DISCARD'; 
+    
+    // Deal
+    appState.players.forEach(p => {
+        p.hand = appState.deck.splice(0, 7);
+    });
+    
+    // Initial tray card
+    appState.tray.push(appState.deck.shift());
+
+    syncGameState();
+    
+    // Host UI
+    showScreen('game-screen');
+    renderGame();
+}
+
+function hostHandleDiscard(cardIds) {
+    const player = appState.players[appState.turnIndex];
+    
+    const cardsToDiscard = player.hand.filter(c => cardIds.includes(c.id));
+    if(cardsToDiscard.length === 0) return;
+    
+    // Validation
+    const firstVal = cardsToDiscard[0].val;
+    if(!cardsToDiscard.every(c => c.val === firstVal)) return;
+    
+    // Remove & Add to Tray
+    player.hand = player.hand.filter(c => !cardIds.includes(c.id));
+    cardsToDiscard.forEach(c => appState.tray.push(c));
+    
+    appState.turnPhase = 'PICK';
+    syncGameState();
+}
+
+function hostHandlePick(source) {
+    const player = appState.players[appState.turnIndex];
+    let newCard = null;
+    
+    if(source === 'DECK') {
+        if(appState.deck.length === 0) {
+            if(appState.tray.length > 1) {
+                const top = appState.tray.pop();
+                appState.deck = shuffle(appState.tray);
+                appState.tray = [top];
+            } else return;
+        }
+        newCard = appState.deck.shift();
+    } else if (source === 'TRAY' && appState.tray.length > 0) {
+        newCard = appState.tray.pop();
+    }
+    
+    if(newCard) {
+        player.hand.push(newCard);
+        appState.turnIndex = (appState.turnIndex + 1) % appState.players.length;
+        appState.turnPhase = 'DISCARD';
+        syncGameState();
+    }
+}
+
+function hostHandleShow(sessionId) {
+    const player = appState.players.find(p => p.sessionId === sessionId);
+    const sum = calculateHandSum(player.hand);
+    
+    if(sum > 5) return; 
+
+    // Calculate results
+    let results = appState.players.map(p => ({
+        sid: p.sessionId,
+        sum: calculateHandSum(p.hand),
+        name: p.name
+    }));
+    
+    let lowestSum = Math.min(...results.map(r => r.sum));
+    let showerIsWinner = (sum === lowestSum);
+    
+    let roundWinnerIds = [];
+    let roundLoserId = null; 
+    let scoreUpdates = {};
+
+    if(showerIsWinner) {
+        // Valid Show
+        results.forEach(r => {
+            if(r.sum === lowestSum) {
+                scoreUpdates[r.sid] = 0;
+                roundWinnerIds.push(r.sid);
+            } else {
+                scoreUpdates[r.sid] = r.sum;
+            }
+        });
+    } else {
+        // Wrong Show
+        roundLoserId = sessionId;
+        let betterCount = results.filter(r => r.sum <= sum && r.sid !== sessionId).length;
+        scoreUpdates[sessionId] = 30 * betterCount;
+        
+        results.forEach(r => {
+            if(r.sid !== sessionId) {
+                if(r.sum === lowestSum) {
+                    scoreUpdates[r.sid] = 0;
+                    roundWinnerIds.push(r.sid);
+                } else {
+                    scoreUpdates[r.sid] = r.sum;
+                }
+            }
+        });
+    }
+    
+    // Apply scores
+    appState.players.forEach(p => {
+        let s = scoreUpdates[p.sessionId];
+        p.scoreHistory.push(s);
+        p.totalScore += s;
+    });
+
+    const gameOverData = {
+        type: 'GAME_OVER',
+        players: getPublicPlayers(true),
+        winnerId: roundWinnerIds,
+        loserId: roundLoserId
+    };
+    
+    // Send to clients
+    Object.keys(appState.peers).forEach(sid => {
+        if(appState.peers[sid].open) appState.peers[sid].send(gameOverData);
+    });
+
+    renderScoreboard(roundWinnerIds, roundLoserId);
+    showScreen('scoreboard-screen');
+    document.getElementById('next-round-btn').style.display = 'block';
+}
+
+function nextRound() {
+    appState.round++;
+    startRound();
+}
+
+function hostKickPlayer(sessionId) {
+    if(sessionId === appState.mySessionId) return;
+    if(appState.peers[sessionId]) appState.peers[sessionId].close();
+    appState.players = appState.players.filter(p => p.sessionId !== sessionId);
+    delete appState.peers[sessionId];
+    syncGameState();
+}
+
+function syncGameState() {
+    const publicState = {
+        type: 'UPDATE_STATE',
+        players: getPublicPlayers(),
+        tray: appState.tray,
+        turnIndex: appState.turnIndex,
+        round: appState.round,
+        turnPhase: appState.turnPhase,
+        gameActive: appState.gameActive,
+        screen: 'game-screen' // Helper to force clients to game screen if they are in lobby
+    };
+
+    // Broadcast
+    Object.keys(appState.peers).forEach(sid => {
+        if(appState.peers[sid].open) appState.peers[sid].send(publicState);
+    });
+
+    // Host Update
+    renderGame();
+    updateLobbyUI();
+}
+
+function getPublicPlayers(gameOver = false) {
+    // Hide cards of others unless game over
+    return appState.players.map(p => ({
+        sessionId: p.sessionId,
+        name: p.name,
+        handCount: p.hand.length,
+        hand: (p.sessionId === appState.mySessionId || gameOver) ? p.hand : [], 
+        totalScore: p.totalScore,
+        scoreHistory: p.scoreHistory
+    }));
+}
+
+// --- CLIENT DATA HANDLING ---
+
+function handleClientData(data) {
+    if(data.type === 'UPDATE_STATE') {
+        appState.players = data.players;
+        appState.tray = data.tray;
+        appState.turnIndex = data.turnIndex;
+        appState.round = data.round;
+        appState.turnPhase = data.turnPhase;
+        appState.gameActive = data.gameActive;
+        
+        // Logic to switch screens automatically
+        if(data.gameActive && document.getElementById('lobby-screen').classList.contains('active-screen')) {
+            showScreen('game-screen');
+        }
+        if(!data.gameActive && !document.getElementById('scoreboard-screen').classList.contains('active-screen')) {
+             // In lobby
+             updateLobbyUI();
+        } else {
+             renderGame();
+        }
+    } 
+    else if (data.type === 'GAME_OVER') {
+        appState.players = data.players;
+        renderScoreboard(data.winnerId, data.loserId);
+        showScreen('scoreboard-screen');
+    }
+}
+
+// --- UI HELPERS ---
+
+function setupUIForHost(roomId) {
+    showScreen('lobby-screen');
+    const link = `${window.location.protocol}//${window.location.host}${window.location.pathname}?join=${roomId}`;
+    
+    document.getElementById('lobby-link-display').innerText = link;
+    document.getElementById('host-settings').style.display = 'block';
+    document.getElementById('start-game-btn').style.display = 'block';
+    document.getElementById('lobby-status-text').innerText = "Waiting for players...";
+    updateLobbyUI();
+}
+
+function copyLink() {
+    const text = document.getElementById('lobby-link-display').innerText;
+    navigator.clipboard.writeText(text).then(() => showToast("Link Copied!"));
+}
+
+function updateLobbyUI() {
+    const list = document.getElementById('lobby-list');
+    list.innerHTML = '';
+    appState.players.forEach(p => {
+        let li = document.createElement('li');
+        li.innerHTML = `<span>${p.name} ${p.sessionId === appState.mySessionId ? '(You)' : ''}</span>`;
+        if(appState.isHost && p.sessionId !== appState.mySessionId) {
+            let kickBtn = document.createElement('button');
+            kickBtn.innerText = 'Kick';
+            kickBtn.className = 'danger';
+            kickBtn.style.padding = '5px';
+            kickBtn.style.fontSize = '12px';
+            kickBtn.onclick = () => hostKickPlayer(p.sessionId);
+            li.appendChild(kickBtn);
+        }
+        list.appendChild(li);
+    });
+}
+
+function renderGame() {
+    const myPlayer = appState.players.find(p => p.sessionId === appState.mySessionId);
+    if(!myPlayer) return; // Should not happen
+
+    document.getElementById('game-room-id').innerText = appState.hostId;
+    document.getElementById('round-indicator').innerText = "Round: " + appState.round;
+    
+    const currentPlayer = appState.players[appState.turnIndex];
+    const isMyTurn = currentPlayer.sessionId === appState.mySessionId;
+    
+    // Turn Indicator
+    const turnText = document.getElementById('turn-indicator');
+    if(isMyTurn) {
+        turnText.innerText = `YOUR TURN (${appState.turnPhase})`;
+        turnText.style.color = "var(--accent)";
+    } else {
+        turnText.innerText = `${currentPlayer.name}'s Turn`;
+        turnText.style.color = "white";
+    }
+
+    // Opponents
+    const oppContainer = document.getElementById('opponents');
+    oppContainer.innerHTML = '';
+    appState.players.forEach(p => {
+        if(p.sessionId !== appState.mySessionId) {
+            let div = document.createElement('div');
+            div.className = 'opponent';
+            if(p.sessionId === currentPlayer.sessionId) div.classList.add('active-turn');
+            div.innerHTML = `<div>${p.name}</div><div style="font-size:16px">🂠 ${p.handCount || p.hand.length}</div>`;
+            oppContainer.appendChild(div);
+        }
+    });
+
+    // Tray
+    const trayEl = document.getElementById('discard-pile');
+    if(appState.tray.length > 0) {
+        let topCard = appState.tray[appState.tray.length - 1];
+        trayEl.innerHTML = renderCardHTML(topCard);
+        trayEl.style.borderColor = (isMyTurn && appState.turnPhase === 'PICK') ? 'var(--accent)' : 'rgba(255,255,255,0.5)';
+    } else {
+        trayEl.innerHTML = `<span>TRAY<br>(Empty)</span>`;
+    }
+
+    // Deck
+    const deckEl = document.getElementById('draw-pile');
+    deckEl.style.borderColor = (isMyTurn && appState.turnPhase === 'PICK') ? 'var(--accent)' : 'rgba(255,255,255,0.5)';
+
+    // My Hand
+    const handContainer = document.getElementById('hand-container');
+    handContainer.innerHTML = '';
+    myPlayer.hand.sort((a,b) => a.val - b.val);
+    
+    myPlayer.hand.forEach((card, idx) => {
+        let cDiv = document.createElement('div');
+        cDiv.className = `card ${card.color}`;
+        cDiv.innerHTML = renderCardInner(card);
+        cDiv.onclick = () => toggleCardSelect(idx, myPlayer);
+        
+        if(appState.selectedCardIndices.includes(idx)) cDiv.classList.add('selected');
+        handContainer.appendChild(cDiv);
+    });
+
+    // Controls
+    const btnDiscard = document.getElementById('btn-discard');
+    const btnShow = document.getElementById('btn-show');
+    const pickHint = document.getElementById('pick-hint');
+    const handSumDisp = document.getElementById('hand-sum-display');
+    
+    const currentSum = calculateHandSum(myPlayer.hand);
+    handSumDisp.innerText = "Sum: " + currentSum;
+
+    btnDiscard.disabled = true;
+    btnShow.disabled = true;
+    pickHint.style.display = 'none';
+
+    if(isMyTurn) {
+        if(appState.turnPhase === 'DISCARD') {
+            if(appState.selectedCardIndices.length > 0) {
+                const selected = appState.selectedCardIndices.map(i => myPlayer.hand[i]);
+                if(selected.every(c => c.val === selected[0].val)) btnDiscard.disabled = false;
+            }
+            if(currentSum <= 5) btnShow.disabled = false;
+        } else if (appState.turnPhase === 'PICK') {
+            pickHint.style.display = 'block';
+        }
+    }
+}
+
+// --- ACTIONS ---
+
+function toggleCardSelect(idx, player) {
+    const isMyTurn = appState.players[appState.turnIndex].sessionId === appState.mySessionId;
+    if(!isMyTurn || appState.turnPhase !== 'DISCARD') return;
+
+    if(appState.selectedCardIndices.includes(idx)) {
+        appState.selectedCardIndices = appState.selectedCardIndices.filter(i => i !== idx);
+    } else {
+        if(appState.selectedCardIndices.length === 0) {
+            appState.selectedCardIndices.push(idx);
+        } else {
+            const firstIdx = appState.selectedCardIndices[0];
+            if(player.hand[firstIdx].val === player.hand[idx].val) {
+                appState.selectedCardIndices.push(idx);
+            } else {
+                appState.selectedCardIndices = [idx];
+            }
+        }
+    }
+    renderGame();
+}
+
+function actionDiscard() {
+    const myPlayer = appState.players.find(p => p.sessionId === appState.mySessionId);
+    const cardIds = appState.selectedCardIndices.map(i => myPlayer.hand[i].id);
+    
+    if(appState.isHost) hostHandleDiscard(cardIds);
+    else sendAction('ACTION_DISCARD', { cardIds: cardIds });
+    
+    appState.selectedCardIndices = [];
+}
+
+function pickCard(source) {
+    const isMyTurn = appState.players[appState.turnIndex].sessionId === appState.mySessionId;
+    if(!isMyTurn || appState.turnPhase !== 'PICK') return;
+    
+    if(appState.isHost) hostHandlePick(source);
+    else sendAction('ACTION_PICK', { source: source });
+}
+
+function actionShow() {
+    if(appState.isHost) hostHandleShow(appState.mySessionId);
+    else sendAction('ACTION_SHOW', {});
+}
+
+function sendAction(type, payload) {
+    if(appState.hostConn) appState.hostConn.send({ type: type, sessionId: appState.mySessionId, ...payload });
+}
+
+// --- UTILS & VISUALS ---
+
+function showScreen(id) {
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active-screen'));
+    document.getElementById(id).classList.add('active-screen');
+}
+
+function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.innerText = msg;
+    t.style.opacity = 1;
+    setTimeout(() => t.style.opacity = 0, 3000);
+}
+
+function renderCardInner(card) {
+    return `
+        <div class="card-corner">${card.display} <br> ${card.suit}</div>
+        <div class="card-center">${card.suit}</div>
+        <div class="card-corner bottom">${card.display} <br> ${card.suit}</div>
+    `;
+}
+function renderCardHTML(card) {
+    return `<div class="card ${card.color}" style="position:absolute;">${renderCardInner(card)}</div>`;
+}
+
+// Game Rules Logic
+const SUITS = ['♥', '♦', '♣', '♠'];
+function createDeck() {
+    let deck = [];
+    for(let d=0; d<2; d++) {
+        for(let s of SUITS) {
+            for(let n=1; n<=13; n++) {
+                let display = n === 1 ? 'A' : (n===11?'J':(n===12?'Q':(n===13?'K':n)));
+                let color = (s === '♥' || s === '♦') ? 'red' : 'black';
+                deck.push({ id: `d${d}-${s}-${n}`, suit: s, val: n, display: display, color: color, isJoker: false });
+            }
+        }
+    }
+    for(let j=0; j<5; j++) deck.push({ id: `joker-${j}`, suit: '★', val: 0, display: 'JK', color: 'purple', isJoker: true });
+    return shuffle(deck);
+}
+function shuffle(arr) { return arr.sort(() => Math.random() - 0.5); }
+function calculateHandSum(hand) { return hand.reduce((sum, c) => sum + (c.isJoker ? 0 : c.val), 0); }
+
+function renderScoreboard(winners, loserId) {
+    const table = document.getElementById('score-table');
+    table.innerHTML = '';
+    const thead = document.createElement('tr');
+    thead.innerHTML = `<th>Round</th>` + appState.players.map(p => `<th>${p.name}</th>`).join('');
+    table.appendChild(thead);
+    
+    for(let r=0; r<appState.round; r++) {
+        let tr = document.createElement('tr');
+        tr.innerHTML = `<td>${r+1}</td>`;
+        appState.players.forEach(p => {
+            let td = document.createElement('td');
+            let s = p.scoreHistory[r];
+            td.innerText = (s!==undefined) ? s : '-';
+            // Simple highlight for current round
+            if(r === appState.round-1) {
+                if(winners && winners.includes(p.sessionId)) td.className = 'winner-hl';
+                if(loserId && p.sessionId === loserId) td.className = 'loser-hl';
+            }
+            tr.appendChild(td);
+        });
+        table.appendChild(tr);
+    }
+    let totalTr = document.createElement('tr');
+    totalTr.className = 'total-row';
+    totalTr.innerHTML = `<td>TOTAL</td>` + appState.players.map(p => `<td>${p.totalScore}</td>`).join('');
+    table.appendChild(totalTr);
+}
+
+function backToLobby() { if(confirm("End Game?")) location.href = window.location.pathname; }
+
+</script>
+</body>
+</html>
