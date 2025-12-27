@@ -51,6 +51,7 @@
             justify-content: center;
             width: 100%; height: 100%;
             position: absolute; top: 0; left: 0;
+            overflow-y:auto;
         }
         .active-screen { display: flex; }
 
@@ -210,9 +211,9 @@
 
     <!-- 2. Lobby Screen -->
     <div id="lobby-screen" class="screen">
-        <h2>Lobby: <span id="lobby-code-display" style="color:var(--accent)"></span></h2>
+        <h2 style="padding-top: 10%;">Lobby: <span id="lobby-code-display" style="color:var(--accent)"></span></h2>
         
-        <div id="host-settings" style="display:none; margin-bottom: 10px; background:rgba(0,0,0,0.2); padding:10px; border-radius:5px;">
+        <div id="host-settings" style="display:none; margin-bottom: 10px; background:rgba(0,0,0,0.2); padding:0px; border-radius:5px;">
             <label>Late Penalty Score: </label>
             <input type="number" id="late-penalty-input" value="10" style="width:60px; padding:5px;">
         </div>
