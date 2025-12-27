@@ -282,62 +282,90 @@
                 });
         }
 
-        function joinLobby() {
+        window.joinLobby = function() {
             myName = document.getElementById('username').value.trim();
             let code = document.getElementById('room-code').value.trim().toUpperCase();
-            if(code.includes('?room=')) code = code.split('?room=')[1];
+            
+            // FIXED: Extract room code from URL
+            if(code.includes('?room=')) code = code.split('?room=')[1].split('&')[0];
+            if(code.includes('/')) code = code.split('/').pop();
             
             if(!myName || !code) return showToast("Enter Name & Code");
             localStorage.setItem('point_name', myName);
             
             roomId = code;
-            const roomRef = window.db.ref(`rooms/${roomId}`);
+            const roomRef = ref(db, `rooms/${roomId}`);
             
-            roomRef.get().then(snap => {
-                if(!snap.exists()) return showToast("Room not found");
+            get(roomRef).then(snap => {
+                if(!snap.exists()) return showToast("Room not found!");
                 
+                const roomData = snap.val();
                 const updates = {};
-                updates[`rooms/${roomId}/players/${myId}/name`] = myName;
-                if(!snap.val().players || !snap.val().players[myId]) {
-                    updates[`rooms/${roomId}/players/${myId}/score`] = 0;
-                    updates[`rooms/${roomId}/players/${myId}/history`] = [];
-                    updates[`rooms/${roomId}/players/${myId}/hand`] = [];
+                
+                // FIXED: Late joiner penalty logic
+                if(roomData.status === 'GAME' && roomData.round > 1) {
+                    const penalty = roomData.penalty || 10;
+                    const missedRounds = roomData.round - 1;
+                    const penaltyHistory = Array(missedRounds).fill(penalty);
+                    const totalPenalty = penalty * missedRounds;
+                    
+                    updates[`rooms/${roomId}/players/${myId}`] = {
+                        name: myName,
+                        score: totalPenalty,
+                        history: penaltyHistory,
+                        hand: []
+                    };
+                } else {
+                    updates[`rooms/${roomId}/players/${myId}`] = {
+                        name: myName,
+                        score: 0,
+                        history: [],
+                        hand: []
+                    };
                 }
                 
-                window.db.ref().update(updates)
-                    .then(() => enterLobby())
-                    .catch(err => alert("Join Error: " + err.message));
-            }).catch(err => alert("Read Error: " + err.message));
-        }
+                update(ref(db), updates).then(() => enterLobby());
+            }).catch(err => showToast("Connection error: " + err.message));
+        }                   
 
         function enterLobby() {
             showScreen('lobby-screen');
             document.getElementById('lobby-code-display').innerText = roomId;
             
-            window.db.ref(`rooms/${roomId}`).on('value', (snapshot) => {
+            // ADDED: Setup disconnect handler
+            const playerRef = ref(db, `rooms/${roomId}/players/${myId}`);
+            onDisconnect(playerRef).remove();
+            
+            onValue(ref(db, `rooms/${roomId}`), (snapshot) => {
                 gameData = snapshot.val();
+                
                 if(!gameData) {
-                    alert("Room closed/deleted");
+                    alert("Room has been closed");
                     window.location.reload();
                     return;
                 }
                 
+                // FIXED: Check if kicked
                 if(gameData.players && !gameData.players[myId]) {
-                    alert("You have been kicked.");
+                    alert("You have been removed from the game");
                     window.location.reload();
                     return;
                 }
 
-                renderLobby();
-                
-                if(gameData.status === 'GAME' && !document.getElementById('game-screen').classList.contains('active-screen')) {
-                    showScreen('game-screen');
-                }
-                if(gameData.status === 'SCORE' && !document.getElementById('score-screen').classList.contains('active-screen')) {
+                // Update UI based on game status
+                if(gameData.status === 'LOBBY') {
+                    renderLobby();
+                } else if(gameData.status === 'GAME') {
+                    if(!document.getElementById('game-screen').classList.contains('active-screen')) {
+                        showScreen('game-screen');
+                    }
+                    renderGame();
+                } else if(gameData.status === 'SCORE') {
+                    if(!document.getElementById('score-screen').classList.contains('active-screen')) {
+                        showScreen('score-screen');
+                    }
                     renderScoreboard();
-                    showScreen('score-screen');
                 }
-                if(gameData.status === 'GAME') renderGame();
             });
         }
 
@@ -389,85 +417,117 @@
             const playerIds = Object.keys(gameData.players);
             const updates = {};
             
+            // Initialize hands for all players
             playerIds.forEach(pid => {
                 updates[`rooms/${roomId}/players/${pid}/hand`] = deck.splice(0, 7);
             });
             
             updates[`rooms/${roomId}/deck`] = deck;
             updates[`rooms/${roomId}/tray`] = tray;
-            updates[`rooms/${roomId}/turnIndex`] = (gameData.round - 1) % playerIds.length;
+            
+            // FIXED: Rotate starter based on round
+            const starterIndex = (gameData.round - 1) % playerIds.length;
+            updates[`rooms/${roomId}/turnIndex`] = starterIndex;
             updates[`rooms/${roomId}/turnPhase`] = 'DISCARD';
             updates[`rooms/${roomId}/status`] = 'GAME';
             
-            window.db.ref().update(updates);
+            // ADDED: Clear last round data
+            updates[`rooms/${roomId}/lastRoundData`] = null;
+            
+            update(ref(db), updates).then(() => {
+                showScreen('game-screen');
+                selectedCardIndices = []; // Reset selection
+            });
         }
 
-        function performAction(type, payload) {
-            if(!isMyTurn()) return;
+        window.performAction = function(type, payload) {
+            if(!gameData || gameData.status !== 'GAME') return;
+            if(!isMyTurn()) return showToast("Not your turn!");
             
             const updates = {};
             const playerRef = `rooms/${roomId}/players/${myId}`;
             const roomRef = `rooms/${roomId}`;
             
             if(type === 'DISCARD') {
-                if(gameData.turnPhase !== 'DISCARD') return;
+                if(gameData.turnPhase !== 'DISCARD') return showToast("Must discard first!");
+                
                 const myHand = gameData.players[myId].hand || [];
+                if(selectedCardIndices.length === 0) return showToast("Select cards to discard");
+                
+                // FIXED: Validate same value
                 const selectedCards = selectedCardIndices.map(i => myHand[i]);
+                const firstVal = selectedCards[0].val;
+                if(!selectedCards.every(c => c.val === firstVal)) {
+                    return showToast("Cards must have same value!");
+                }
+                
                 const newHand = myHand.filter((_, i) => !selectedCardIndices.includes(i));
                 const newTray = [...(gameData.tray || []), ...selectedCards];
                 
                 updates[`${playerRef}/hand`] = newHand;
                 updates[`${roomRef}/tray`] = newTray;
                 updates[`${roomRef}/turnPhase`] = 'PICK';
+                
                 selectedCardIndices = [];
                 
             } else if (type === 'PICK') {
-                if(gameData.turnPhase !== 'PICK') return;
+                if(gameData.turnPhase !== 'PICK') return showToast("Discard first!");
                 
                 let newCard = null;
                 let newDeck = [...(gameData.deck || [])];
                 let newTray = [...(gameData.tray || [])];
                 
                 if(payload === 'DECK') {
+                    // FIXED: Reshuffle logic
                     if(newDeck.length === 0) {
                         if(newTray.length > 1) {
                             const top = newTray.pop();
-                            newDeck = shuffle(newTray);
+                            const reshuffleCards = [...newTray];
+                            newDeck = shuffle(reshuffleCards);
                             newTray = [top];
-                        } else return; 
+                        } else {
+                            return showToast("No cards left!");
+                        }
                     }
                     newCard = newDeck.shift();
                 } else if (payload === 'TRAY') {
-                    if(newTray.length === 0) return;
+                    if(newTray.length === 0) return showToast("Tray is empty!");
                     newCard = newTray.pop();
                 }
+                
+                if(!newCard) return;
                 
                 const myHand = gameData.players[myId].hand || [];
                 updates[`${playerRef}/hand`] = [...myHand, newCard];
                 updates[`${roomRef}/deck`] = newDeck;
                 updates[`${roomRef}/tray`] = newTray;
                 
+                // FIXED: Next turn logic
                 const pIds = Object.keys(gameData.players);
                 let nextIdx = (gameData.turnIndex + 1) % pIds.length;
                 updates[`${roomRef}/turnIndex`] = nextIdx;
                 updates[`${roomRef}/turnPhase`] = 'DISCARD';
             } 
             else if (type === 'SHOW') {
-                 handleShowLogic();
-                 return;
+                if(gameData.turnPhase !== 'DISCARD') return showToast("Can only SHOW at start of turn!");
+                handleShowLogic();
+                return;
             }
             
-            window.db.ref().update(updates);
-        }
+            update(ref(db), updates).catch(err => showToast("Error: " + err.message));
+        }       
 
         function handleShowLogic() {
-            const mySum = calculateHandSum(gameData.players[myId].hand);
-            if(mySum > 5) return;
+            const myHand = gameData.players[myId].hand || [];
+            const mySum = calculateHandSum(myHand);
+            
+            if(mySum > 5) return showToast("Sum must be ≤ 5 to SHOW!");
             
             const pIds = Object.keys(gameData.players);
             let results = pIds.map(pid => ({
                 id: pid,
-                sum: calculateHandSum(gameData.players[pid].hand)
+                name: gameData.players[pid].name,
+                sum: calculateHandSum(gameData.players[pid].hand || [])
             }));
             
             let lowest = Math.min(...results.map(r => r.sum));
@@ -475,16 +535,24 @@
             let winnerIds = [];
             let loserId = null;
             
+            // FIXED: Proper win/loss logic
             if(mySum === lowest) {
+                // Correct SHOW - Winners get 0, others get their sum
                 results.forEach(r => {
-                     let pts = (r.sum === lowest) ? 0 : r.sum;
-                     addScoreToHistory(updates, r.id, pts);
-                     if(r.sum === lowest) winnerIds.push(r.id);
+                    if(r.sum === lowest) {
+                        addScoreToHistory(updates, r.id, 0);
+                        winnerIds.push(r.id);
+                    } else {
+                        addScoreToHistory(updates, r.id, r.sum);
+                    }
                 });
             } else {
+                // WRONG SHOW - Penalty calculation
                 loserId = myId;
-                let penaltyMult = results.filter(r => r.sum <= mySum && r.id !== myId).length;
-                let myPenalty = 30 * penaltyMult;
+                
+                // Count players with sum less than or equal to caller's sum (excluding caller)
+                let betterPlayers = results.filter(r => r.sum <= mySum && r.id !== myId).length;
+                let myPenalty = 30 * betterPlayers;
                 
                 results.forEach(r => {
                     if(r.id === myId) {
@@ -499,8 +567,13 @@
             }
             
             updates[`rooms/${roomId}/status`] = 'SCORE';
-            updates[`rooms/${roomId}/lastRoundData`] = { winners: winnerIds, loser: loserId };
-            window.db.ref().update(updates);
+            updates[`rooms/${roomId}/lastRoundData`] = { 
+                winners: winnerIds, 
+                loser: loserId,
+                round: gameData.round 
+            };
+            
+            update(ref(db), updates).catch(err => showToast("Error: " + err.message));
         }
 
         function addScoreToHistory(updates, pid, score) {
@@ -518,16 +591,28 @@
         }
 
         function renderGame() {
+            if(!gameData || !gameData.players || !gameData.players[myId]) return;
+            
             const pIds = Object.keys(gameData.players);
             const currentPlayerId = pIds[gameData.turnIndex];
-            const isMyTurn = (currentPlayerId === myId);
+            const isMyTurnNow = (currentPlayerId === myId);
             
             document.getElementById('game-room-id').innerText = roomId;
-            document.getElementById('round-ind').innerText = "R: " + gameData.round;
-            document.getElementById('turn-ind').innerText = isMyTurn ? 
-                `YOUR TURN (${gameData.turnPhase})` : `${gameData.players[currentPlayerId].name}'s Turn`;
-            document.getElementById('turn-ind').style.color = isMyTurn ? "var(--accent)" : "white";
+            document.getElementById('round-ind').innerText = "Round: " + gameData.round;
+            
+            // FIXED: Better turn indicator
+            const turnInd = document.getElementById('turn-ind');
+            if(isMyTurnNow) {
+                turnInd.innerText = `YOUR TURN - ${gameData.turnPhase}`;
+                turnInd.style.color = "var(--accent)";
+                turnInd.style.fontWeight = "bold";
+            } else {
+                turnInd.innerText = `${gameData.players[currentPlayerId].name}'s Turn`;
+                turnInd.style.color = "white";
+                turnInd.style.fontWeight = "normal";
+            }
 
+            // Render opponents
             const oppDiv = document.getElementById('opponents');
             oppDiv.innerHTML = '';
             pIds.forEach(pid => {
@@ -536,35 +621,63 @@
                     const isActive = (pid === currentPlayerId);
                     oppDiv.innerHTML += `
                         <div class="opponent ${isActive ? 'active-turn' : ''}">
-                            <div>${p.name}</div>
-                            <div style="font-size:16px">🂠 ${p.hand ? p.hand.length : 0}</div>
+                            <div style="font-weight:bold;">${p.name}</div>
+                            <div style="font-size:18px; margin-top:3px;">🂠 ${p.hand ? p.hand.length : 0}</div>
                         </div>`;
                 }
             });
             
+            // FIXED: Tray rendering with proper styling
             const trayEl = document.getElementById('discard-pile');
             if(gameData.tray && gameData.tray.length > 0) {
                 const top = gameData.tray[gameData.tray.length-1];
                 trayEl.innerHTML = renderCardHTML(top);
+                trayEl.style.borderColor = (isMyTurnNow && gameData.turnPhase === 'PICK') ? 
+                    'var(--accent)' : 'rgba(255,255,255,0.5)';
+                trayEl.style.cursor = (isMyTurnNow && gameData.turnPhase === 'PICK') ? 'pointer' : 'default';
             } else {
-                trayEl.innerHTML = `<span>TRAY<br>(Empty)</span>`;
+                trayEl.innerHTML = `<span style="font-size:10px; color:#aaa;">TRAY<br>(Empty)</span>`;
+                trayEl.style.borderColor = 'rgba(255,255,255,0.3)';
+                trayEl.style.cursor = 'default';
             }
             
+            // FIXED: Deck styling
+            const deckEl = document.getElementById('draw-pile');
+            deckEl.style.borderColor = (isMyTurnNow && gameData.turnPhase === 'PICK') ? 
+                'var(--accent)' : 'rgba(255,255,255,0.5)';
+            deckEl.style.cursor = (isMyTurnNow && gameData.turnPhase === 'PICK') ? 'pointer' : 'default';
+            
+            // Render hand
             const handDiv = document.getElementById('hand-container');
             handDiv.innerHTML = '';
             const myHand = gameData.players[myId].hand || [];
             
-            myHand.forEach((card, idx) => {
+            // FIXED: Sort hand by value for better UX
+            const sortedHand = [...myHand].sort((a, b) => {
+                if(a.isJoker) return -1;
+                if(b.isJoker) return 1;
+                return a.val - b.val;
+            });
+            
+            sortedHand.forEach((card, idx) => {
+                // Find original index for selection tracking
+                const originalIdx = myHand.findIndex(c => 
+                    c.val === card.val && c.suit === card.suit && c.display === card.display
+                );
+                
                 let div = document.createElement('div');
-                div.className = `card ${card.color} ${selectedCardIndices.includes(idx) ? 'selected' : ''}`;
+                div.className = `card ${card.color}`;
+                if(selectedCardIndices.includes(originalIdx)) div.classList.add('selected');
                 div.innerHTML = renderCardInner(card);
-                div.onclick = () => toggleSelect(idx, card);
+                div.onclick = () => toggleSelect(originalIdx, card);
+                div.style.cursor = (isMyTurnNow && gameData.turnPhase === 'DISCARD') ? 'pointer' : 'default';
                 handDiv.appendChild(div);
             });
             
             const sum = calculateHandSum(myHand);
-            document.getElementById('hand-sum').innerText = "Sum: " + sum;
+            document.getElementById('hand-sum').innerText = `Sum: ${sum}`;
             
+            // FIXED: Button states
             const btnDiscard = document.getElementById('btn-discard');
             const btnShow = document.getElementById('btn-show');
             const pickHint = document.getElementById('pick-hint');
@@ -573,45 +686,73 @@
             btnShow.disabled = true;
             pickHint.style.display = 'none';
             
-            if(isMyTurn) {
+            if(isMyTurnNow) {
                 if(gameData.turnPhase === 'DISCARD') {
+                    // Enable discard if valid selection
                     if(selectedCardIndices.length > 0) {
-                        const vals = selectedCardIndices.map(i => myHand[i].val);
-                        if(vals.every(v => v === vals[0])) btnDiscard.disabled = false;
+                        const selectedCards = selectedCardIndices.map(i => myHand[i]);
+                        const firstVal = selectedCards[0].val;
+                        if(selectedCards.every(c => c.val === firstVal)) {
+                            btnDiscard.disabled = false;
+                        }
                     }
-                    if(sum <= 5) btnShow.disabled = false;
-                } else {
+                    // Enable show if sum <= 5
+                    if(sum <= 5) {
+                        btnShow.disabled = false;
+                    }
+                } else if(gameData.turnPhase === 'PICK') {
                     pickHint.style.display = 'block';
+                    pickHint.innerText = '👆 Pick from DECK or TRAY';
                 }
             }
         }
 
         function renderScoreboard() {
-            if(gameData.host === myId) document.getElementById('next-round-btn').style.display = 'inline-block';
+            const isHost = (gameData.host === myId);
+            const nextBtn = document.getElementById('next-round-btn');
+            nextBtn.style.display = isHost ? 'inline-block' : 'none';
             
             const table = document.getElementById('score-table');
             const pIds = Object.keys(gameData.players);
             const lastRes = gameData.lastRoundData || {};
             
-            let html = `<tr><th>Round</th>${pIds.map(id => `<th>${gameData.players[id].name}</th>`).join('')}</tr>`;
+            let html = `<tr><th>Round</th>`;
+            pIds.forEach(id => {
+                html += `<th>${gameData.players[id].name}</th>`;
+            });
+            html += `</tr>`;
             
-            const roundsPlayed = gameData.round; 
-            for(let r=0; r < roundsPlayed; r++) {
-                html += `<tr><td>${r+1}</td>`;
+            // FIXED: Show all completed rounds
+            const roundsCompleted = gameData.round;
+            for(let r = 0; r < roundsCompleted; r++) {
+                html += `<tr><td><strong>${r + 1}</strong></td>`;
                 pIds.forEach(pid => {
-                    const h = gameData.players[pid].history || [];
-                    const pts = h[r] !== undefined ? h[r] : '-';
-                    let cls = '';
-                    if(r === roundsPlayed-1) {
-                        if(lastRes.winners && lastRes.winners.includes(pid)) cls = 'winner-hl';
-                        if(lastRes.loser === pid) cls = 'loser-hl';
+                    const history = gameData.players[pid].history || [];
+                    const score = history[r];
+                    let cellClass = '';
+                    
+                    // Highlight last round results
+                    if(r === roundsCompleted - 1 && lastRes.round === roundsCompleted) {
+                        if(lastRes.winners && lastRes.winners.includes(pid)) {
+                            cellClass = 'winner-hl';
+                        }
+                        if(lastRes.loser === pid) {
+                            cellClass = 'loser-hl';
+                        }
                     }
-                    html += `<td class="${cls}">${pts}</td>`;
+                    
+                    html += `<td class="${cellClass}">${score !== undefined ? score : '-'}</td>`;
                 });
                 html += `</tr>`;
             }
             
-            html += `<tr class="total-row"><td>TOTAL</td>${pIds.map(pid => `<td>${gameData.players[pid].score}</td>`).join('')}</tr>`;
+            // Total row
+            html += `<tr class="total-row"><td><strong>TOTAL</strong></td>`;
+            pIds.forEach(pid => {
+                html += `<td><strong>${gameData.players[pid].score || 0}</strong></td>`;
+            });
+            html += `</tr>`;
+            
             table.innerHTML = html;
         }
 
@@ -655,7 +796,14 @@
             for(let j=0; j<5; j++) d.push({val:0, suit:'★', display:'JK', color:'purple', isJoker:true});
             return shuffle(d);
         }
-        function shuffle(a) { return a.sort(() => Math.random() - 0.5); }
+        function shuffle(array) {
+            const arr = [...array]; // Don't mutate original
+            for (let i = arr.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [arr[i], arr[j]] = [arr[j], arr[i]];
+            }
+            return arr;
+        }
 
         function renderCardInner(c) {
             return `<div class="card-corner">${c.display}<br>${c.suit}</div>
