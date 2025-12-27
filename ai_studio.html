@@ -1,0 +1,851 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>POINT - Card Game</title>
+    <!-- Firebase SDK -->
+    <script type="module">
+      import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+      import { getDatabase, ref, set, onValue, get, update, onDisconnect, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+      window.firebaseSDK = { initializeApp, getDatabase, ref, set, onValue, get, update, onDisconnect, serverTimestamp };
+    </script>
+    <style>
+        :root {
+            --bg-color: #2E7D32; /* Felt Green */
+            --card-width: 65px;
+            --card-height: 91px;
+            --text-color: white;
+            --accent: #FFD700;
+            --danger: #d90429;
+            --primary: #2a9d8f;
+        }
+
+        * { box-sizing: border-box; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+        body {
+            margin: 0; padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+        }
+
+        /* Landscape Warning */
+        #portrait-warning {
+            display: none;
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: #1a1a1a;
+            z-index: 9999;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 20px;
+        }
+        @media (orientation: portrait) {
+            #portrait-warning { display: flex; }
+        }
+
+        /* Screens */
+        .screen {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            width: 100%; height: 100%;
+            position: absolute; top: 0; left: 0;
+            overflow-y:auto;
+            transition: opacity 0.3s;
+        }
+        .active-screen { display: flex; }
+
+        /* UI Elements */
+        input, button {
+            padding: 12px 18px;
+            margin: 8px;
+            border-radius: 8px;
+            border: none;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        button { cursor: pointer; background: var(--primary); color: #fff; transition: background-color 0.2s, transform 0.1s; }
+        button:hover { background-color: #248a7e; }
+        button:active { transform: scale(0.97); }
+        button:disabled { background: #ccc; cursor: not-allowed; color: #666;}
+        button.danger { background: var(--danger); }
+        button.accent { background: var(--accent); color: #000; }
+        input { color: #000; text-align: center; }
+
+        /* Lobby */
+        .lobby-box { background: rgba(0,0,0,0.3); padding: 20px; border-radius: 12px; width: clamp(300px, 90vw, 500px); }
+        #lobby-list {
+            list-style: none; padding: 0; width: 100%;
+            background: rgba(0,0,0,0.3); border-radius: 10px; margin-top: 15px;
+        }
+        #lobby-list li {
+            padding: 12px; border-bottom: 1px solid rgba(255,255,255,0.1);
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        #lobby-code-display { font-family: monospace; background: #fff; color: #000; padding: 5px 10px; border-radius: 5px; cursor: pointer; }
+
+        /* Game Layout */
+        #game-ui {
+            width: 100%; height: 100%;
+            display: grid;
+            grid-template-rows: 40px 1fr 140px;
+        }
+
+        /* Top Bar */
+        #top-bar {
+            background: rgba(0,0,0,0.5);
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 0 20px; font-size: 14px;
+        }
+        #turn-indicator { font-weight: bold; color: var(--accent); }
+
+        /* Center Table */
+        #table-area {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+        }
+        
+        #opponents {
+            position: absolute; top: 10px; width: 100%;
+            display: flex; justify-content: center; gap: 20px;
+        }
+        .opponent {
+            background: rgba(0,0,0,0.4);
+            padding: 5px 10px; border-radius: 10px;
+            text-align: center; font-size: 12px;
+            border: 2px solid transparent;
+            min-width: 80px;
+        }
+        .opponent.active-turn { border: 2px solid var(--accent); }
+        .opponent .card-icon { font-size: 18px; }
+
+        .deck-placeholder {
+            width: calc(var(--card-width) + 10px); height: calc(var(--card-height) + 10px);
+            border: 2px dashed rgba(255,255,255,0.5);
+            border-radius: 8px; margin: 0 20px;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            position: relative;
+            background: rgba(0,0,0,0.2);
+            cursor: pointer;
+            transition: border-color 0.2s;
+        }
+        .deck-placeholder.actionable:hover { border-color: var(--accent); }
+        .deck-placeholder span { font-size: 12px; text-align: center; color: rgba(255,255,255,0.8); }
+
+        /* Player Hand */
+        #player-area {
+            background: linear-gradient(transparent, rgba(0,0,0,0.8));
+            display: flex; flex-direction: column;
+            align-items: center;
+            padding-bottom: 5px;
+        }
+        #hand-container {
+            display: flex;
+            justify-content: center;
+            margin-top: -35px;
+            height: 100px;
+            width: 100%;
+            padding: 0 10px;
+            overflow-x: auto;
+        }
+        #controls { display: flex; gap: 10px; margin-top: 5px; align-items: center; }
+
+        /* Card Visuals */
+        .card {
+            width: var(--card-width); height: var(--card-height);
+            background: white; color: black;
+            border-radius: 6px;
+            display: flex; flex-direction: column;
+            justify-content: space-between;
+            padding: 3px 5px;
+            box-shadow: 2px 2px 5px rgba(0,0,0,0.4);
+            font-weight: bold; font-family: 'Arial', sans-serif;
+            cursor: pointer;
+            position: relative;
+            margin: 0 -12px;
+            transition: transform 0.2s, border 0.2s;
+            border: 2px solid #333;
+        }
+        #hand-container .card:hover { transform: translateY(-15px); }
+        .card.selected { transform: translateY(-25px); border: 2px solid var(--accent); }
+        .card.red { color: var(--danger); }
+        .card.black { color: black; }
+        .card-center { font-size: 28px; align-self: center; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); }
+        .card-corner { font-size: 14px; line-height: 1; }
+        .card-corner.bottom { transform: rotate(180deg); align-self: flex-end; }
+        
+        .card-back {
+            background: linear-gradient(135deg, #4682b4, #5a9bd5);
+            color: transparent;
+            border: 5px solid white;
+        }
+        .card-back::after { content: "🃏"; font-size: 40px; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); }
+
+        /* Scoreboard Table */
+        #scoreboard-screen { background: rgba(0,0,0,0.8); }
+        #scoreboard-container { background: var(--bg-color); border: 2px solid var(--accent); border-radius: 12px; padding: 20px; width: 90vw; max-height: 90vh; overflow: auto; }
+        table { width: 100%; border-collapse: collapse; background: white; color: black; font-size: 14px; }
+        th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+        th { background: #eee; }
+        tr.total-row { background: var(--accent); font-weight: bold; }
+        
+        /* Notification */
+        #toast {
+            position: fixed; bottom: 150px; left: 50%; transform: translateX(-50%);
+            background: rgba(0,0,0,0.9); color: white; padding: 12px 24px;
+            border-radius: 25px; opacity: 0; pointer-events: none; transition: opacity 0.3s;
+            z-index: 10000;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="portrait-warning">
+        <h1>Please Rotate Your Device</h1>
+        <p>This game is best played in Landscape mode.</p>
+    </div>
+
+    <!-- 1. Start Screen -->
+    <div id="start-screen" class="screen active-screen">
+        <div class="lobby-box">
+            <h1>POINT Card Game</h1>
+            <input type="text" id="username" placeholder="Enter your Name" maxlength="12" style="width:100%;">
+            <div>
+                <button onclick="app.createLobby()" class="accent">Create Lobby</button>
+                <button onclick="app.showJoinInput()">Join Lobby</button>
+            </div>
+            <div id="join-container" style="display:none; margin-top:10px;">
+                <input type="text" id="room-code-input" placeholder="Enter Room Code" style="width:100%; text-transform:uppercase;">
+                <button onclick="app.joinLobby()">Connect</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. Lobby Screen -->
+    <div id="lobby-screen" class="screen">
+        <div class="lobby-box">
+            <h2>Lobby Code: <span id="lobby-code-display" onclick="app.copyLobbyLink()">CODE</span></h2>
+            <div id="host-settings" style="display:none; margin-bottom: 10px; text-align:center;">
+                <label>Late Penalty Score: </label>
+                <input type="number" id="late-penalty-input" value="10" style="width:80px; padding:8px;" onchange="app.updateSettings()">
+            </div>
+            <p>Players:</p>
+            <ul id="lobby-list"></ul>
+            <div id="lobby-controls" style="text-align:center;">
+                <button id="start-game-btn" style="display:none" onclick="app.startGame()" class="accent">Start Game</button>
+            </div>
+            <p id="waiting-text" style="text-align:center; font-style:italic;">Waiting for host to start...</p>
+        </div>
+    </div>
+
+    <!-- 3. Game Screen -->
+    <div id="game-screen" class="screen">
+        <div id="game-ui">
+            <div id="top-bar">
+                <span>Room: <span id="game-room-id"></span></span>
+                <span id="round-indicator">Round: 1</span>
+                <span id="turn-indicator">Waiting...</span>
+            </div>
+
+            <div id="table-area">
+                <div id="opponents"></div>
+                <div class="deck-placeholder" id="draw-pile" onclick="app.pickCard('draw')">
+                    <div id="draw-pile-visual" class="card card-back" style="position: absolute;"></div>
+                    <span>DECK (<span id="draw-count">0</span>)</span>
+                </div>
+                <div class="deck-placeholder" id="discard-pile" onclick="app.pickCard('tray')">
+                    <div id="discard-pile-visual"><span>TRAY<br>(Empty)</span></div>
+                </div>
+            </div>
+
+            <div id="player-area">
+                <div id="hand-sum-display" style="font-size:12px; margin-bottom:5px; color:#ddd;">Sum: 0</div>
+                <div id="hand-container"></div>
+                <div id="controls">
+                    <button id="btn-show" onclick="app.actionShow()" class="danger" disabled>SHOW</button>
+                    <button id="btn-discard" onclick="app.actionDiscard()" disabled>DISCARD</button>
+                    <button id="btn-scoreboard" onclick="app.showScoreboard()">SCORE</button>
+                    <div id="pick-hint" style="font-size:14px; display:none; color: var(--accent);">Pick a card</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 4. Scoreboard Screen -->
+    <div id="scoreboard-screen" class="screen">
+        <div id="scoreboard-container">
+            <h2 style="text-align:center;">Scoreboard</h2>
+            <p id="round-end-message" style="text-align:center; font-weight:bold;"></p>
+            <table id="score-table"></table>
+            <div style="margin-top:20px; text-align:center;">
+                <button onclick="app.closeScoreboard()" id="next-round-btn">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast">Message</div>
+
+<script type="module">
+// --- DESTRUCTURING FIREBASE SDK ---
+const { initializeApp, getDatabase, ref, set, onValue, get, update, onDisconnect, serverTimestamp } = window.firebaseSDK;
+
+// --- YOUR FIREBASE CONFIGURATION ---
+const firebaseConfig = {
+    apiKey: "AIzaSyAZ7-gmZfu6nfRvY-4hqdqQ86lGE405RQU",
+    authDomain: "pointgame-281d5.firebaseapp.com",
+    databaseURL: "https://pointgame-281d5-default-rtdb.asia-southeast1.firebasedatabase.app/",
+    projectId: "pointgame-281d5",
+    storageBucket: "pointgame-281d5.appspot.com",
+    messagingSenderId: "1006005693168",
+    appId: "1:1006005693168:web:e26847ed3f4371146bf035"
+};
+
+// --- INITIALIZE FIREBASE ---
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getDatabase(firebaseApp);
+
+class PointGame {
+    constructor() {
+        this.myId = 'player_' + Date.now() + Math.random().toString(36).substr(2, 5);
+        this.myName = '';
+        this.isHost = false;
+        this.gameCode = null;
+        this.gameRef = null;
+        this.selectedCardIndices = [];
+    }
+
+    // --- LOBBY & CONNECTION ---
+
+    showScreen(id) {
+        document.querySelectorAll('.screen').forEach(s => s.classList.remove('active-screen'));
+        document.getElementById(id).classList.add('active-screen');
+    }
+
+    showToast(msg) {
+        const t = document.getElementById('toast');
+        t.innerText = msg;
+        t.style.opacity = 1;
+        setTimeout(() => t.style.opacity = 0, 2500);
+    }
+
+    showJoinInput() { document.getElementById('join-container').style.display = 'block'; }
+    
+    copyLobbyLink() {
+        const url = window.location.href.split('?')[0] + '?gameCode=' + this.gameCode;
+        navigator.clipboard.writeText(url).then(() => this.showToast('Game link copied!'));
+    }
+
+    async createLobby() {
+        this.myName = document.getElementById('username').value.trim();
+        if (!this.myName) return this.showToast("Please enter your name.");
+        
+        this.isHost = true;
+        this.gameCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+        this.gameRef = ref(db, 'games/' + this.gameCode);
+
+        const initialGameState = {
+            hostId: this.myId,
+            status: 'lobby',
+            settings: {
+                latePenalty: 10
+            },
+            players: {
+                [this.myId]: { name: this.myName, online: true }
+            },
+            currentRound: 0,
+            scores: {}
+        };
+
+        await set(this.gameRef, initialGameState);
+        this.listenForGameUpdates();
+    }
+
+    async joinLobby() {
+        this.myName = document.getElementById('username').value.trim();
+        const code = document.getElementById('room-code-input').value.trim().toUpperCase();
+        if (!this.myName || !code) return this.showToast("Enter name and code.");
+
+        this.gameCode = code;
+        this.gameRef = ref(db, 'games/' + this.gameCode);
+
+        const snapshot = await get(this.gameRef);
+        if (!snapshot.exists()) return this.showToast("Game code not found.");
+
+        const gameData = snapshot.val();
+        const updates = {
+            [`players/${this.myId}/name`]: this.myName,
+            [`players/${this.myId}/online`]: true
+        };
+        
+        // Apply late joiner penalty
+        if (gameData.status === 'playing' && gameData.currentRound > 0) {
+            for (let i = 1; i <= gameData.currentRound; i++) {
+                updates[`scores/${i}/${this.myId}`] = gameData.settings.latePenalty;
+            }
+        }
+        
+        await update(this.gameRef, updates);
+        this.listenForGameUpdates();
+    }
+    
+    listenForGameUpdates() {
+        // Handle disconnects gracefully
+        const playerStatusRef = ref(db, `games/${this.gameCode}/players/${this.myId}/online`);
+        onDisconnect(playerStatusRef).set(false);
+
+        onValue(this.gameRef, (snapshot) => {
+            if (!snapshot.exists()) {
+                alert("The game has ended or the host has left.");
+                location.reload();
+                return;
+            }
+            const gameData = snapshot.val();
+            
+            // Check if kicked
+            if (gameData.players && !gameData.players[this.myId]) {
+                alert("You have been removed from the game.");
+                location.reload();
+                return;
+            }
+
+            this.render(gameData);
+        });
+    }
+
+    // --- GAME ACTIONS (WRITING TO FIREBASE) ---
+    
+    updateSettings() {
+        if (!this.isHost) return;
+        const penalty = parseInt(document.getElementById('late-penalty-input').value) || 10;
+        update(this.gameRef, { 'settings/latePenalty': penalty });
+    }
+    
+    async kickPlayer(playerId) {
+        if (!this.isHost) return;
+        
+        const updates = {
+            [`players/${playerId}`]: null
+        };
+
+        const snapshot = await get(this.gameRef);
+        const gameData = snapshot.val();
+        if (gameData.scores) {
+            Object.keys(gameData.scores).forEach(roundNum => {
+                updates[`scores/${roundNum}/${playerId}`] = null;
+            });
+        }
+        await update(this.gameRef, updates);
+    }
+    
+    async startGame() {
+        if (!this.isHost) return;
+        const snapshot = await get(ref(db, `games/${this.gameCode}/players`));
+        const players = snapshot.val();
+        if (Object.keys(players).length < 2) return this.showToast("Need at least 2 players.");
+
+        this.startNewRound(1, Object.keys(players));
+    }
+    
+    async startNewRound(roundNumber, playerIds) {
+        if (!this.isHost) return;
+        
+        let deck = this._createDeck();
+        deck = this._shuffle(deck);
+
+        const updates = {
+            status: 'playing',
+            currentRound: roundNumber,
+            turnIndex: (roundNumber - 1) % playerIds.length,
+            turnPhase: 'discard',
+        };
+
+        playerIds.forEach(pid => {
+            updates[`players/${pid}/hand`] = deck.splice(0, 7);
+        });
+
+        updates.tray = [deck.pop()];
+        updates.drawPile = deck;
+
+        await update(this.gameRef, updates);
+    }
+
+    async actionDiscard() {
+        const gameData = (await get(this.gameRef)).val();
+        const player = gameData.players[this.myId];
+        const cardsToDiscard = this.selectedCardIndices.map(i => player.hand[i]);
+
+        const newHand = player.hand.filter((_, index) => !this.selectedCardIndices.includes(index));
+        const newTray = [...(gameData.tray || []), ...cardsToDiscard];
+
+        this.selectedCardIndices = [];
+        await update(this.gameRef, {
+            [`players/${this.myId}/hand`]: newHand,
+            'tray': newTray,
+            'turnPhase': 'pick'
+        });
+    }
+
+    async pickCard(source) {
+        const gameData = (await get(this.gameRef)).val();
+        if (gameData.players[Object.keys(gameData.players)[gameData.turnIndex]]?.name !== this.myName || gameData.turnPhase !== 'pick') return;
+        
+        let pickedCard;
+        let updates = {};
+        let player = gameData.players[this.myId];
+        
+        let drawPile = gameData.drawPile || [];
+        let tray = gameData.tray || [];
+        
+        if (source === 'draw') {
+            if (drawPile.length === 0) { // Reshuffle logic
+                if (tray.length <= 1) return this.showToast("No cards left to draw!");
+                const topCard = tray.pop();
+                drawPile = this._shuffle(tray);
+                tray = [topCard];
+            }
+            pickedCard = drawPile.pop();
+            updates.drawPile = drawPile;
+            updates.tray = tray;
+        } else { // 'tray'
+            if (tray.length === 0) return;
+            pickedCard = tray.pop();
+            updates.tray = tray;
+        }
+        
+        updates[`players/${this.myId}/hand`] = [...(player.hand || []), pickedCard];
+        
+        // Move to next turn
+        const playerIds = Object.keys(gameData.players);
+        updates.turnIndex = (gameData.turnIndex + 1) % playerIds.length;
+        updates.turnPhase = 'discard';
+
+        await update(this.gameRef, updates);
+    }
+    
+    async actionShow() {
+        const gameData = (await get(this.gameRef)).val();
+        const me = gameData.players[this.myId];
+        const mySum = this._calculateHandSum(me.hand);
+
+        if (mySum > 5) return this.showToast("Sum must be 5 or less to show.");
+        
+        // Only host calculates scores to prevent cheating
+        if (this.isHost) {
+            this._calculateAndSetScores(gameData);
+        } else {
+            // Signal to host to calculate scores
+            await update(this.gameRef, { status: 'calculating_scores' });
+        }
+    }
+
+    async _calculateAndSetScores(gameData) {
+        const showerId = Object.keys(gameData.players)[gameData.turnIndex];
+        const shower = gameData.players[showerId];
+        const showerSum = this._calculateHandSum(shower.hand);
+
+        let results = {};
+        Object.entries(gameData.players).forEach(([pid, p]) => {
+            results[pid] = this._calculateHandSum(p.hand);
+        });
+
+        const winners = Object.entries(results).filter(([pid, sum]) => sum <= showerSum);
+
+        const updates = { status: 'round_over' };
+        const roundScores = {};
+        let message = "";
+        
+        if (winners.length === 1 && winners[0][0] === showerId) { // Clean win
+            message = `${shower.name} wins the round!`;
+            Object.keys(gameData.players).forEach(pid => {
+                roundScores[pid] = (pid === showerId) ? 0 : results[pid];
+            });
+        } else { // Wrong show or tie
+            const peopleWhoBeatOrTied = winners.filter(([pid]) => pid !== showerId);
+            message = `${shower.name} made a wrong show!`;
+            if (showerSum === 0 && peopleWhoBeatOrTied.some(([pid, sum]) => sum === 0)) {
+                 message = `A 0-0 tie! Both players get 0.`;
+            }
+            
+            Object.keys(gameData.players).forEach(pid => {
+                if (results[pid] <= showerSum) { // This player is a winner (or tied)
+                    roundScores[pid] = 0;
+                } else if (pid === showerId) { // The shower is the loser
+                    roundScores[pid] = 30 * peopleWhoBeatOrTied.length;
+                } else {
+                    roundScores[pid] = results[pid];
+                }
+            });
+        }
+        
+        updates[`scores/${gameData.currentRound}`] = roundScores;
+        updates.roundEndMessage = message;
+        await update(this.gameRef, updates);
+
+        // Host automatically starts the next round after a delay
+        setTimeout(() => {
+            const playerIds = Object.keys(gameData.players);
+            this.startNewRound(gameData.currentRound + 1, playerIds);
+        }, 5000);
+    }
+    
+    showScoreboard() { document.getElementById('scoreboard-screen').classList.add('active-screen'); }
+    closeScoreboard() { document.getElementById('scoreboard-screen').classList.remove('active-screen'); }
+
+    // --- CARD & DECK LOGIC (PRIVATE) ---
+
+    _createDeck() {
+        let deck = [];
+        const SUITS = ['♥', '♦', '♣', '♠'];
+        for (let d = 0; d < 2; d++) {
+            for (let s of SUITS) {
+                for (let v = 1; v <= 13; v++) {
+                    deck.push({ v, s, id: `${s}${v}-${d}` });
+                }
+            }
+        }
+        for (let j = 0; j < 5; j++) deck.push({ v: 0, s: 'Joker', id: `J${j}` });
+        return deck;
+    }
+
+    _shuffle(deck) {
+        for (let i = deck.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [deck[i], deck[j]] = [deck[j], deck[i]];
+        }
+        return deck;
+    }
+    
+    _getCardDisplay(card) {
+        if (card.s === 'Joker') return { display: 'JOKER', color: 'black' };
+        const color = ['♥', '♦'].includes(card.s) ? 'red' : 'black';
+        let display;
+        if (card.v === 1) display = 'A';
+        else if (card.v === 11) display = 'J';
+        else if (card.v === 12) display = 'Q';
+        else if (card.v === 13) display = 'K';
+        else display = card.v;
+        return { display, color };
+    }
+
+    _getCardPointValue(card) { return card.v; }
+
+    _calculateHandSum(hand) {
+        if (!hand) return 0;
+        return Object.values(hand).reduce((sum, card) => sum + this._getCardPointValue(card), 0);
+    }
+    
+    _toggleCardSelect(index, myHand) {
+        if (this.selectedCardIndices.includes(index)) {
+            this.selectedCardIndices = this.selectedCardIndices.filter(i => i !== index);
+        } else {
+            if (this.selectedCardIndices.length > 0) {
+                const firstSelectedValue = myHand[this.selectedCardIndices[0]].v;
+                if (myHand[index].v !== firstSelectedValue) {
+                    this.selectedCardIndices = [index];
+                } else {
+                    this.selectedCardIndices.push(index);
+                }
+            } else {
+                this.selectedCardIndices.push(index);
+            }
+        }
+    }
+
+
+    // --- UI RENDERING ---
+
+    render(gameData) {
+        const { status, players, hostId, turnIndex, turnPhase } = gameData;
+
+        if (status === 'lobby') {
+            this.showScreen('lobby-screen');
+            document.getElementById('lobby-code-display').innerText = this.gameCode;
+            document.getElementById('host-settings').style.display = this.isHost ? 'block' : 'none';
+            document.getElementById('start-game-btn').style.display = this.isHost ? 'block' : 'none';
+            document.getElementById('waiting-text').style.display = this.isHost ? 'none' : 'block';
+
+            const list = document.getElementById('lobby-list');
+            list.innerHTML = '';
+            Object.entries(players).forEach(([pid, p]) => {
+                let li = document.createElement('li');
+                li.innerHTML = `<span>${p.name} ${pid === hostId ? '👑' : ''}</span><span style="color:${p.online ? 'lightgreen' : 'gray'}">${p.online ? 'Online' : 'Offline'}</span>`;
+                if (this.isHost && pid !== this.myId) {
+                    let kickBtn = document.createElement('button');
+                    kickBtn.innerText = 'Kick';
+                    kickBtn.className = 'danger';
+                    kickBtn.style.cssText = 'font-size:10px; padding: 4px 8px; margin:0;';
+                    kickBtn.onclick = () => this.kickPlayer(pid);
+                    li.appendChild(kickBtn);
+                }
+                list.appendChild(li);
+            });
+
+        } else if (status === 'playing' || status === 'round_over' || status === 'calculating_scores') {
+            this.showScreen('game-screen');
+            
+            // If host sees 'calculating_scores', they do the math
+            if (this.isHost && status === 'calculating_scores') {
+                this._calculateAndSetScores(gameData);
+                return; // Prevent re-render until scores are calculated
+            }
+            
+            const playerIds = Object.keys(players);
+            const me = players[this.myId];
+            if (!me) return; // Not in game yet
+            
+            const myHand = Object.values(me.hand || {});
+            const currentPlayerId = playerIds[turnIndex];
+            const currentPlayer = players[currentPlayerId];
+            const isMyTurn = currentPlayerId === this.myId;
+
+            // Top bar
+            document.getElementById('game-room-id').innerText = this.gameCode;
+            document.getElementById('round-indicator').innerText = `Round: ${gameData.currentRound}`;
+            document.getElementById('turn-indicator').innerText = isMyTurn ? `YOUR TURN (${turnPhase.toUpperCase()})` : `${currentPlayer.name}'s Turn`;
+
+            // Opponents
+            const oppContainer = document.getElementById('opponents');
+            oppContainer.innerHTML = '';
+            playerIds.forEach(pid => {
+                if (pid !== this.myId) {
+                    const p = players[pid];
+                    let div = document.createElement('div');
+                    div.className = `opponent ${pid === currentPlayerId ? 'active-turn' : ''}`;
+                    div.innerHTML = `<div>${p.name}</div><div class="card-icon">🂠 ${Object.keys(p.hand || {}).length}</div>`;
+                    oppContainer.appendChild(div);
+                }
+            });
+
+            // Decks
+            const drawPileEl = document.getElementById('draw-pile');
+            const discardPileEl = document.getElementById('discard-pile');
+            document.getElementById('draw-count').innerText = (gameData.drawPile || []).length;
+            
+            if (gameData.tray && gameData.tray.length > 0) {
+                const topCard = gameData.tray[gameData.tray.length - 1];
+                const { display, color } = this._getCardDisplay(topCard);
+                discardPileEl.innerHTML = `<div class="card ${color}" style="position:absolute;">
+                    <div class="card-corner">${display}<br>${topCard.s}</div><div class="card-center">${topCard.s}</div><div class="card-corner bottom">${display}<br>${topCard.s}</div>
+                </div>`;
+            } else {
+                discardPileEl.innerHTML = `<span>TRAY<br>(Empty)</span>`;
+            }
+            
+            // My Hand
+            const handContainer = document.getElementById('hand-container');
+            handContainer.innerHTML = '';
+            myHand.sort((a,b) => a.v - b.v).forEach((card, idx) => {
+                const { display, color } = this._getCardDisplay(card);
+                let cDiv = document.createElement('div');
+                cDiv.className = `card ${color}`;
+                cDiv.innerHTML = `<div class="card-corner">${display}<br>${card.s}</div><div class="card-center">${card.s}</div><div class="card-corner bottom">${display}<br>${card.s}</div>`;
+                cDiv.onclick = () => {
+                    if (isMyTurn && turnPhase === 'discard') {
+                        this._toggleCardSelect(idx, myHand);
+                        this.render(gameData); // Re-render to show selection
+                    }
+                };
+                if (this.selectedCardIndices.includes(idx)) cDiv.classList.add('selected');
+                handContainer.appendChild(cDiv);
+            });
+
+            // Controls
+            const btnDiscard = document.getElementById('btn-discard');
+            const btnShow = document.getElementById('btn-show');
+            const pickHint = document.getElementById('pick-hint');
+            const handSumDisp = document.getElementById('hand-sum-display');
+            const currentSum = this._calculateHandSum(myHand);
+            handSumDisp.innerText = `Sum: ${currentSum}`;
+            
+            btnDiscard.disabled = true;
+            btnShow.disabled = true;
+            pickHint.style.display = 'none';
+            drawPileEl.classList.remove('actionable');
+            discardPileEl.classList.remove('actionable');
+
+            if (isMyTurn) {
+                if (turnPhase === 'discard') {
+                    btnShow.disabled = currentSum > 5;
+                    if (this.selectedCardIndices.length > 0) {
+                        const selectedCards = this.selectedCardIndices.map(i => myHand[i]);
+                        const allSame = selectedCards.every(c => c.v === selectedCards[0].v);
+                        btnDiscard.disabled = !allSame || selectedCards.length === 0;
+                    }
+                } else { // pick phase
+                    pickHint.style.display = 'block';
+                    drawPileEl.classList.add('actionable');
+                    discardPileEl.classList.add('actionable');
+                }
+            }
+            
+            // Scoreboard pop-up for round end
+            if (status === 'round_over') {
+                this.renderScoreboard(gameData);
+                document.getElementById('scoreboard-screen').classList.add('active-screen');
+                document.getElementById('round-end-message').innerText = gameData.roundEndMessage || "Round Over!";
+            }
+        }
+    }
+    
+    renderScoreboard(gameData) {
+        const table = document.getElementById('score-table');
+        table.innerHTML = '';
+        const players = gameData.players;
+        const playerIds = Object.keys(players);
+
+        // Header
+        const thead = document.createElement('thead');
+        let headerRow = '<tr><th>Round</th>';
+        playerIds.forEach(pid => headerRow += `<th>${players[pid].name}</th>`);
+        headerRow += '</tr>';
+        thead.innerHTML = headerRow;
+        table.appendChild(thead);
+
+        // Body
+        const tbody = document.createElement('tbody');
+        const totals = playerIds.reduce((acc, pid) => ({ ...acc, [pid]: 0 }), {});
+        for (let r = 1; r <= gameData.currentRound; r++) {
+            let row = `<tr><td>${r}</td>`;
+            playerIds.forEach(pid => {
+                const score = gameData.scores?.[r]?.[pid] ?? 0;
+                row += `<td>${score}</td>`;
+                totals[pid] += score;
+            });
+            row += '</tr>';
+            tbody.innerHTML += row;
+        }
+        table.appendChild(tbody);
+
+        // Footer
+        const tfoot = document.createElement('tfoot');
+        let footerRow = '<tr class="total-row"><td>TOTAL</td>';
+        playerIds.forEach(pid => footerRow += `<td>${totals[pid]}</td>`);
+        footerRow += '</tr>';
+        tfoot.innerHTML = footerRow;
+        table.appendChild(tfoot);
+    }
+}
+
+window.app = new PointGame();
+
+// Auto-join if gameCode is in URL
+window.addEventListener('load', () => {
+    const params = new URLSearchParams(window.location.search);
+    const gameCode = params.get('gameCode');
+    if (gameCode) {
+        document.getElementById('room-code-input').value = gameCode;
+        app.showJoinInput();
+        app.showToast("Enter your name to join the game!");
+    }
+});
+</script>
+</body>
+</html>
