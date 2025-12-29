@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>POINT - The Greatest Card Game</title>
+    <!-- Firebase SDK -->
+    <script type="module">
+      import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+      import { getDatabase, ref, set, onValue, get, update, onDisconnect } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+      window.firebaseSDK = { initializeApp, getDatabase, ref, set, onValue, get, update, onDisconnect };
+    </script>
+    <style>
+        :root {
+            --bg-color: #013220;
+            --table-color: #014222;
+            --card-width: 70px;
+            --card-height: 98px;
+            --text-light: #f0f0f0;
+            --accent: #FFD700;
+            --danger: #d90429;
+            --primary: #2a9d8f;
+        }
+
+        * { box-sizing: border-box; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+        body {
+            margin: 0; padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-light);
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+        }
+
+        /* Animations */
+        @keyframes pulse {
+            0% { transform: scale(1); box-shadow: 0 0 5px rgba(255,215,0,0.4); }
+            50% { transform: scale(1.05); box-shadow: 0 0 15px rgba(255,215,0,0.8); }
+            100% { transform: scale(1); box-shadow: 0 0 5px rgba(255,215,0,0.4); }
+        }
+        @keyframes shake {
+            0%, 100% { transform: translateX(0) translateY(-25px); }
+            25% { transform: translateX(-5px) translateY(-25px); }
+            75% { transform: translateX(5px) translateY(-25px); }
+        }
+
+        /* Screens */
+        .screen { display: none; flex-direction: column; align-items: center; justify-content: center; width: 100%; height: 100%; position: absolute; top: 0; left: 0; padding: 10px; overflow:auto; transition: opacity 0.3s; }
+        .active-screen { display: flex; }
+
+        /* UI Elements */
+        input, button { padding: 12px 18px; margin: 8px; border-radius: 8px; border: none; font-size: 16px; font-weight: bold; }
+        button { cursor: pointer; background: var(--primary); color: #fff; transition: all 0.2s; box-shadow: 0 4px 6px rgba(0,0,0,0.2); }
+        button:hover { filter: brightness(1.1); }
+        button:active { transform: scale(0.97); box-shadow: 0 2px 3px rgba(0,0,0,0.2); }
+        button:disabled { background: #999; cursor: not-allowed; color: #ccc; box-shadow: none; }
+        button.danger { background: var(--danger); }
+        button.accent { background: var(--accent); color: #000; }
+        input { color: #000; text-align: center; width: 100%; }
+
+        /* Lobby */
+        .lobby-box { background: rgba(0,0,0,0.3); padding: 20px; border-radius: 12px; width: clamp(300px, 90vw, 500px); }
+        #lobby-code-display { font-family: monospace; background: #fff; color: #000; padding: 5px 10px; border-radius: 5px; cursor: pointer; user-select: text; }
+
+        /* Game Layout */
+        #game-screen { background: radial-gradient(ellipse at center, var(--table-color) 0%, var(--bg-color) 70%); }
+        #game-ui { width: 100%; height: 100%; display: grid; grid-template-rows: 1fr auto; }
+
+        /* Table Area */
+        #table-area { position: relative; width: 100%; height: 100%; }
+        #center-piles { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); display: flex; align-items: center; gap: 20px; }
+        .deck-placeholder { width: calc(var(--card-width) + 10px); height: calc(var(--card-height) + 10px); border: 2px dashed rgba(255,255,255,0.3); border-radius: 8px; display: flex; flex-direction: column; justify-content: center; align-items: center; position: relative; background: rgba(0,0,0,0.2); cursor: pointer; transition: all 0.2s; }
+        .deck-placeholder.actionable { border-style: solid; border-color: var(--accent); }
+        .deck-placeholder.actionable:hover { transform: scale(1.05); }
+        .deck-placeholder span { font-size: 12px; text-align: center; color: rgba(255,255,255,0.8); }
+
+        /* Opponent Layout */
+        .opponent { position: absolute; background: rgba(0,0,0,0.5); padding: 5px 10px; border-radius: 10px; text-align: center; font-size: 12px; border: 2px solid transparent; min-width: 85px; transition: all 0.3s; }
+        .opponent.active-turn { border-color: var(--accent); animation: pulse 1.5s infinite; }
+
+        /* Player Area */
+        #player-area { background: linear-gradient(transparent, rgba(0,0,0,0.8)); display: flex; flex-direction: column; align-items: center; padding: 10px 0 5px 0; position: relative; }
+        #hand-container { display: flex; justify-content: center; height: 110px; width: 100%; padding: 0 10px; }
+        #controls { display: flex; gap: 10px; margin-top: 10px; align-items: center; }
+        #hand-sum-badge { position: absolute; top: -15px; right: 20px; background: #333; color: var(--accent); width: 60px; height: 60px; border-radius: 50%; display: flex; flex-direction: column; justify-content: center; align-items: center; font-weight: bold; border: 3px solid var(--accent); box-shadow: 0 0 10px rgba(0,0,0,0.5); }
+        #hand-sum-badge span { font-size: 10px; color: #fff; }
+        #hand-sum-badge div { font-size: 24px; }
+        
+        /* Card Visuals */
+        .card { width: var(--card-width); height: var(--card-height); background: #fff; color: #000; border-radius: 6px; display: flex; flex-direction: column; justify-content: space-between; padding: 4px 5px; box-shadow: 0 4px 8px rgba(0,0,0,0.3); font-weight: bold; font-family: 'Arial', sans-serif; cursor: pointer; position: relative; margin: 0 -20px; transition: transform 0.2s, border 0.2s; border: 2px solid #333; }
+        #hand-container .card:hover { transform: translateY(-15px); }
+        .card.selected { transform: translateY(-25px); border-color: var(--accent); }
+        .card.shake { animation: shake 0.5s; }
+        .card.red { color: var(--danger); }
+        .card-center { font-size: 32px; align-self: center; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); }
+        .card-corner { font-size: 16px; line-height: 1; }
+        .card-corner.bottom { transform: rotate(180deg); align-self: flex-end; }
+        .card.joker .card-center { font-size: 18px; font-weight: bold; letter-spacing: -1px; }
+        .card-back { background: linear-gradient(135deg, #4682b4, #5a9bd5); border: 5px solid white; }
+        .card-back::after { content: "🃏"; font-size: 40px; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); }
+        .moving-card { position: fixed; z-index: 1000; transition: transform 0.5s ease-in-out; }
+
+        /* Scoreboard */
+        #scoreboard-screen { background: rgba(0,0,0,0.85); backdrop-filter: blur(5px); }
+        #scoreboard-container { background: var(--bg-color); border: 2px solid var(--accent); border-radius: 12px; padding: 20px; width: 95vw; max-width: 800px; max-height: 90vh; overflow: auto; }
+        table { width: 100%; border-collapse: collapse; background: white; color: black; font-size: 14px; }
+        th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+        tfoot { font-weight: bold; font-size: 16px; }
+        tfoot td { background: var(--accent); color: #000; }
+    </style>
+</head>
+<body>
+
+    <div id="portrait-warning"><h1>Please Rotate Your Device</h1></div>
+
+    <div id="start-screen" class="screen active-screen"><div class="lobby-box"><h1>POINT</h1><input type="text" id="username" placeholder="Enter Your Name" maxlength="12"><div><button onclick="app.createLobby()" class="accent">Create Lobby</button><button onclick="app.showJoinInput()">Join Lobby</button></div><div id="join-container" style="display:none; margin-top:10px;"><input type="text" id="room-code-input" placeholder="Enter Lobby Code" style="text-transform:uppercase;"><button onclick="app.joinLobby()">Connect</button></div></div></div>
+    <div id="lobby-screen" class="screen"><div class="lobby-box"><h2>Lobby Code: <span id="lobby-code-display" onclick="app.copyLobbyLink()">CODE</span></h2><div id="host-settings" style="display:none; text-align:center;"><label>Late Joiner Penalty:</label><input type="number" id="late-penalty-input" value="10" style="width:80px;" onchange="app.updateSettings()"></div><p>Players:</p><ul id="lobby-list"></ul><div style="text-align:center;"><button id="start-game-btn" style="display:none" onclick="app.startGame()" class="accent">Start Game</button></div></div></div>
+    
+    <div id="game-screen" class="screen">
+        <div id="game-ui">
+            <div id="table-area">
+                <div id="opponents-container"></div>
+                <div id="center-piles">
+                    <div class="deck-placeholder" id="draw-pile" onclick="app.pickCard('draw')"><div class="card card-back" style="position: absolute;"></div><span>DRAW (<span id="draw-count">0</span>)</span></div>
+                    <div class="deck-placeholder" id="pickable-card-spot" onclick="app.pickCard('tray')"><span>PREVIOUS<br>CARD</span></div>
+                    <div class="deck-placeholder" id="tray-pile" style="cursor:default;"><div id="tray-pile-visual" class="card card-back" style="position: absolute; opacity:0.5;"></div><span>TRAY (<span id="tray-count">0</span>)</span></div>
+                </div>
+            </div>
+            <div id="player-area">
+                <div id="hand-sum-badge"><span>SUM</span><div id="hand-sum-value">0</div></div>
+                <div id="hand-container"></div>
+                <div id="controls"><button id="btn-show" onclick="app.actionShow()" class="danger" disabled>SHOW</button><button id="btn-discard" onclick="app.actionDiscard()" disabled>DISCARD</button><button id="btn-scoreboard" onclick="app.showScoreboard()">SCORE</button></div>
+            </div>
+        </div>
+    </div>
+    
+    <div id="scoreboard-screen" class="screen"><div id="scoreboard-container"><h2 style="text-align:center;">Scoreboard</h2><p id="round-end-message" style="text-align:center; font-weight:bold;"></p><table id="score-table"></table><div style="margin-top:20px; text-align:center;"><button onclick="app.closeScoreboard()">Close</button></div></div></div>
+    <div id="toast" style="position: fixed; bottom: 150px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.9); color: white; padding: 12px 24px; border-radius: 25px; opacity: 0; pointer-events: none; transition: opacity 0.3s; z-index: 10000;"></div>
+
+<script type="module">
+const { initializeApp, getDatabase, ref, set, onValue, get, update, onDisconnect } = window.firebaseSDK;
+const firebaseConfig = {"apiKey":"AIzaSyAZ7-gmZfu6nfRvY-4hqdqQ86lGE405RQU","authDomain":"pointgame-281d5.firebaseapp.com","databaseURL":"https://pointgame-281d5-default-rtdb.asia-southeast1.firebasedatabase.app/","projectId":"pointgame-281d5","storageBucket":"pointgame-281d5.appspot.com","messagingSenderId":"1006005693168","appId":"1:1006005693168:web:e26847ed3f4371146bf035"};
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getDatabase(firebaseApp);
+
+class PointGame {
+    constructor() {
+        this.myId = localStorage.getItem('pointGamePlayerId') || 'player_' + Date.now() + Math.random().toString(36).substr(2, 5);
+        localStorage.setItem('pointGamePlayerId', this.myId);
+        this.myName = '';
+        this.isHost = false;
+        this.gameCode = null;
+        this.gameRef = null;
+        this.selectedCardIndices = [];
+    }
+
+    showScreen(id) { document.querySelectorAll('.screen').forEach(s => s.classList.remove('active-screen')); document.getElementById(id).classList.add('active-screen'); }
+    showToast(msg) { const t = document.getElementById('toast'); t.innerText = msg; t.style.opacity = 1; setTimeout(() => t.style.opacity = 0, 2500); }
+    showJoinInput() { document.getElementById('join-container').style.display = 'block'; }
+    copyLobbyLink() { const url = window.location.href.split('?')[0] + '?gameCode=' + this.gameCode; navigator.clipboard.writeText(url).then(() => this.showToast('Game link copied!')); }
+
+    async createLobby() {
+        this.myName = document.getElementById('username').value.trim();
+        if (!this.myName) return this.showToast("Please enter your name.");
+        this.isHost = true;
+        this.gameCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+        this.gameRef = ref(db, 'games/' + this.gameCode);
+        await set(this.gameRef, { hostId: this.myId, status: 'lobby', settings: { latePenalty: 10 }, players: { [this.myId]: { name: this.myName, online: true } }, currentRound: 0 });
+        this.listenForGameUpdates();
+    }
+
+    async joinLobby() {
+        this.myName = document.getElementById('username').value.trim();
+        const code = document.getElementById('room-code-input').value.trim().toUpperCase();
+        if (!this.myName || !code) return this.showToast("Enter name and code.");
+        this.gameCode = code;
+        this.gameRef = ref(db, 'games/' + this.gameCode);
+        const snapshot = await get(this.gameRef);
+        if (!snapshot.exists()) return this.showToast("Game code not found.");
+        const gameData = snapshot.val();
+        const updates = { [`players/${this.myId}/name`]: this.myName, [`players/${this.myId}/online`]: true };
+        if (gameData.status !== 'lobby' && gameData.currentRound > 0) {
+            for (let i = 1; i <= gameData.currentRound; i++) {
+                updates[`scores/${i}/${this.myId}`] = gameData.scores?.[i]?.[this.myId] === undefined ? gameData.settings.latePenalty : gameData.scores[i][this.myId];
+            }
+        }
+        await update(this.gameRef, updates);
+        this.listenForGameUpdates();
+    }
+    
+    listenForGameUpdates() {
+        onDisconnect(ref(db, `games/${this.gameCode}/players/${this.myId}/online`)).set(false);
+        onValue(this.gameRef, (snapshot) => {
+            if (!snapshot.exists()) { alert("The game has ended."); location.reload(); return; }
+            const gameData = snapshot.val();
+            if (gameData.players && !gameData.players[this.myId]) { alert("You have been removed."); location.reload(); return; }
+            this.render(gameData);
+        });
+    }
+
+    updateSettings() { if (this.isHost) update(this.gameRef, { 'settings/latePenalty': parseInt(document.getElementById('late-penalty-input').value) || 10 }); }
+    async kickPlayer(playerId) { if (!this.isHost) return; const updates = { [`players/${playerId}`]: null }; const gameData = (await get(this.gameRef)).val(); if (gameData.scores) { Object.keys(gameData.scores).forEach(r => { updates[`scores/${r}/${playerId}`] = null; }); } await update(this.gameRef, updates); }
+    async startGame() { if (!this.isHost) return; if (Object.keys((await get(ref(db, `games/${this.gameCode}/players`))).val() || {}).length < 2) return this.showToast("Need at least 2 players."); await this.startNewRound(1); }
+    
+    async startNewRound(roundNumber) {
+        if (!this.isHost) return;
+        const playerIds = Object.keys((await get(ref(db, `games/${this.gameCode}/players`))).val() || {});
+        let deck = this._shuffle(this._createDeck());
+        const updates = { status: 'playing', currentRound: roundNumber, turnIndex: (roundNumber - 1) % playerIds.length, turnPhase: 'discard' };
+        playerIds.forEach(pid => { updates[`players/${pid}/hand`] = deck.splice(0, 7); });
+        updates.tray = [deck.pop()];
+        updates.drawPile = deck;
+        updates.eligibleTrayCard = null;
+        await update(this.gameRef, updates);
+    }
+
+    async actionDiscard() {
+        const gameData = (await get(this.gameRef)).val();
+        const player = gameData.players[this.myId];
+        const cardsToDiscard = this.selectedCardIndices.map(i => player.hand[i]);
+        const newHand = player.hand.filter((_, index) => !this.selectedCardIndices.includes(index));
+        const tray = gameData.tray || [];
+        const eligibleTrayCard = tray.length > 0 ? tray[tray.length - 1] : null;
+        const newTray = [...tray, ...cardsToDiscard];
+        this.selectedCardIndices = [];
+        await update(this.gameRef, { [`players/${this.myId}/hand`]: newHand, 'tray': newTray, 'turnPhase': 'pick', 'eligibleTrayCard': eligibleTrayCard });
+    }
+
+    async pickCard(source) {
+        const gameData = (await get(this.gameRef)).val();
+        const playerIds = Object.keys(gameData.players);
+        if (playerIds[gameData.turnIndex] !== this.myId || gameData.turnPhase !== 'pick') return;
+        let pickedCard, updates = {};
+        let drawPile = gameData.drawPile || [];
+        let tray = gameData.tray || [];
+        if (source === 'draw') {
+            if (drawPile.length === 0) {
+                let cardsToShuffle = tray.filter(c => JSON.stringify(c) !== JSON.stringify(gameData.eligibleTrayCard));
+                if (cardsToShuffle.length === 0) return this.showToast("No cards left to draw!");
+                drawPile = this._shuffle(cardsToShuffle);
+                tray = gameData.eligibleTrayCard ? [gameData.eligibleTrayCard] : [];
+            }
+            pickedCard = drawPile.pop();
+        } else {
+            if (!gameData.eligibleTrayCard) return;
+            pickedCard = gameData.eligibleTrayCard;
+            const cardIndex = tray.findIndex(c => JSON.stringify(c) === JSON.stringify(pickedCard));
+            if (cardIndex > -1) tray.splice(cardIndex, 1);
+        }
+        updates.drawPile = drawPile;
+        updates.tray = tray;
+        updates[`players/${this.myId}/hand`] = [...(gameData.players[this.myId].hand || []), pickedCard];
+        updates.turnIndex = (gameData.turnIndex + 1) % playerIds.length;
+        updates.turnPhase = 'discard';
+        updates.eligibleTrayCard = null;
+        await update(this.gameRef, updates);
+    }
+    
+    async actionShow() {
+        const gameData = (await get(this.gameRef)).val();
+        if (this._calculateHandSum(gameData.players[this.myId].hand) > 5) return this.showToast("Sum must be <= 5 to show.");
+        if (this.isHost) await this._calculateAndSetScores(gameData); else await update(this.gameRef, { status: 'calculating_scores' });
+    }
+
+    async _calculateAndSetScores(gameData) {
+        const playerIds = Object.keys(gameData.players);
+        const showerId = playerIds[gameData.turnIndex];
+        const showerSum = this._calculateHandSum(gameData.players[showerId].hand);
+        let playerSums = {}; playerIds.forEach(pid => { playerSums[pid] = this._calculateHandSum(gameData.players[pid].hand); });
+        const winners = Object.entries(playerSums).filter(([_, sum]) => sum <= showerSum);
+        const updates = { status: 'round_over' };
+        const roundScores = {};
+        let message = "";
+        if (winners.length === 1 && winners[0][0] === showerId) {
+            message = `${gameData.players[showerId].name} wins!`;
+            playerIds.forEach(pid => { roundScores[pid] = (pid === showerId) ? 0 : playerSums[pid]; });
+        } else {
+            const beatOrTiedCount = winners.filter(([pid]) => pid !== showerId).length;
+            message = `${gameData.players[showerId].name} made a wrong show!`;
+            if (showerSum === 0 && winners.length > 1) message = `A 0-0 tie!`;
+            playerIds.forEach(pid => {
+                if (playerSums[pid] <= showerSum) roundScores[pid] = 0;
+                else if (pid === showerId) roundScores[pid] = 30 * beatOrTiedCount;
+                else roundScores[pid] = playerSums[pid];
+            });
+        }
+        updates[`scores/${gameData.currentRound}`] = roundScores;
+        updates.roundEndMessage = message;
+        await update(this.gameRef, updates);
+        setTimeout(async () => { if (this.isHost) await this.startNewRound(gameData.currentRound + 1); }, 6000);
+    }
+    
+    showScoreboard() { document.getElementById('scoreboard-screen').classList.add('active-screen'); }
+    closeScoreboard() { document.getElementById('scoreboard-screen').classList.remove('active-screen'); }
+
+    _createDeck() { let d=[], s=['♥','♦','♣','♠']; for(let i=0;i<2;i++)for(let t of s)for(let v=1;v<=13;v++)d.push({v,s:t}); for(let i=0;i<5;i++)d.push({v:0,s:'Joker'}); return d;}
+    _shuffle(d) { for(let i=d.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[d[i],d[j]]=[d[j],d[i]];} return d;}
+    _calculateHandSum(h) { return h ? h.reduce((sum, c) => sum + c.v, 0) : 0; }
+    _toggleCardSelect(index, myHand) { if(this.selectedCardIndices.includes(index)){this.selectedCardIndices=this.selectedCardIndices.filter(i=>i!==index)}else{if(this.selectedCardIndices.length>0&&myHand[this.selectedCardIndices[0]].v!==myHand[index].v){document.querySelectorAll('.card.selected').forEach(c=>c.classList.add('shake'));setTimeout(()=>document.querySelectorAll('.card.shake').forEach(c=>c.classList.remove('shake')),500);this.selectedCardIndices=[index]}else{this.selectedCardIndices.push(index)}};}
+    
+    _getCardHTML(card) {
+        if (!card) return '';
+        const { display, color } = this._getCardDisplay(card);
+        const isJoker = card.s === 'Joker';
+        return `<div class="card ${color} ${isJoker ? 'joker' : ''}"><div class="card-corner">${display}<br>${isJoker ? '' : card.s}</div><div class="card-center">${isJoker ? 'JOKER' : card.s}</div><div class="card-corner bottom">${display}<br>${isJoker ? '' : card.s}</div></div>`;
+    }
+    _getCardDisplay(c) { if(c.s==='Joker')return{display:'JOKER',color:'black'}; const o=['♥','♦'].includes(c.s)?'red':'black'; let d; if(c.v===1)d='A';else if(c.v===11)d='J';else if(c.v===12)d='Q';else if(c.v===13)d='K';else d=c.v; return{display:d,color:o};}
+
+    render(gameData) {
+        const { status, players, hostId, turnIndex, settings, eligibleTrayCard, tray, drawPile, currentRound, roundEndMessage } = gameData;
+        if (status === 'lobby') {
+            this.showScreen('lobby-screen');
+            document.getElementById('lobby-code-display').innerText = this.gameCode;
+            document.getElementById('host-settings').style.display = this.isHost ? 'block' : 'none';
+            document.getElementById('start-game-btn').style.display = this.isHost ? 'block' : 'none';
+            if(this.isHost) document.getElementById('late-penalty-input').value = settings.latePenalty;
+            const list = document.getElementById('lobby-list'); list.innerHTML = '';
+            Object.entries(players || {}).forEach(([pid, p]) => { let li = document.createElement('li'); li.innerHTML = `<span>${p.name} ${pid===hostId?'👑':''}</span><span style="color:${p.online?'lightgreen':'gray'}">${p.online?'Online':'Offline'}</span>`; if(this.isHost&&pid!==this.myId){let b=document.createElement('button');b.innerText='Kick';b.className='danger';b.style.cssText='font-size:10px;padding:4px 8px;margin:0;';b.onclick=()=>this.kickPlayer(pid);li.appendChild(b);} list.appendChild(li); });
+        } else if (status === 'playing' || status === 'round_over' || status === 'calculating_scores') {
+            if (this.isHost && status === 'calculating_scores') { this._calculateAndSetScores(gameData); return; }
+            this.showScreen('game-screen');
+            const playerIds = Object.keys(players);
+            const me = players[this.myId];
+            if (!me) return;
+            const myHand = me.hand || [];
+            const currentPlayerId = playerIds[turnIndex];
+            const isMyTurn = currentPlayerId === this.myId;
+            const currentSum = this._calculateHandSum(myHand);
+
+            // Opponents
+            const oppContainer = document.getElementById('opponents-container');
+            oppContainer.innerHTML = '';
+            const myIdx = playerIds.indexOf(this.myId);
+            const sortedPlayerIds = [...playerIds.slice(myIdx + 1), ...playerIds.slice(0, myIdx)];
+            const opponentCount = sortedPlayerIds.length;
+            const angleStep = Math.PI / (opponentCount + 1);
+            const tableWidth = oppContainer.clientWidth;
+            const tableHeight = oppContainer.clientHeight;
+            const radiusX = tableWidth * 0.45;
+            const radiusY = tableHeight * 0.4;
+            sortedPlayerIds.forEach((pid, i) => {
+                const angle = angleStep * (i + 1);
+                const x = 50 - Math.cos(angle) * (radiusX / tableWidth * 100);
+                const y = 90 - Math.sin(angle) * (radiusY / tableHeight * 100);
+                const p = players[pid];
+                let div = document.createElement('div');
+                div.className = `opponent ${pid === currentPlayerId ? 'active-turn' : ''}`;
+                div.style.left = `${x}%`;
+                div.style.top = `${y}%`;
+                div.style.transform = 'translate(-50%, -50%)';
+                div.innerHTML = `<div>${p.name}</div><div>🂠 ${(p.hand || []).length}</div>`;
+                oppContainer.appendChild(div);
+            });
+            
+            // Piles
+            document.getElementById('draw-count').innerText = (drawPile || []).length;
+            document.getElementById('tray-count').innerText = (tray || []).length;
+            document.getElementById('pickable-card-spot').innerHTML = this._getCardHTML(eligibleTrayCard) || '<span>PREVIOUS<br>CARD</span>';
+            const trayVisual = document.getElementById('tray-pile-visual');
+            if (tray && tray.length > 0) trayVisual.style.display = 'block'; else trayVisual.style.display = 'none';
+
+            // My Hand
+            document.getElementById('hand-sum-value').innerText = currentSum;
+            const handContainer = document.getElementById('hand-container');
+            handContainer.innerHTML = '';
+            myHand.slice().sort((a,b)=>a.v-b.v).forEach(card => {
+                const realIndex = myHand.findIndex(c=>c===card);
+                const cardEl = document.createElement('div');
+                cardEl.innerHTML = this._getCardHTML(card);
+                cardEl.firstElementChild.dataset.index = realIndex;
+                cardEl.onclick = () => { if(isMyTurn && gameData.turnPhase==='discard'){ this._toggleCardSelect(realIndex, myHand); this.render(gameData); }};
+                if(this.selectedCardIndices.includes(realIndex)) cardEl.firstElementChild.classList.add('selected');
+                handContainer.appendChild(cardEl.firstElementChild);
+            });
+
+            // Controls
+            const btnShow = document.getElementById('btn-show');
+            const btnDiscard = document.getElementById('btn-discard');
+            const drawPileEl = document.getElementById('draw-pile');
+            const pickableSpotEl = document.getElementById('pickable-card-spot');
+            btnShow.disabled = true; btnDiscard.disabled = true;
+            drawPileEl.classList.remove('actionable'); pickableSpotEl.classList.remove('actionable');
+            if(isMyTurn) {
+                if(gameData.turnPhase === 'discard') {
+                    btnShow.disabled = currentSum > 5;
+                    if(this.selectedCardIndices.length > 0) {
+                        const selectedCards = this.selectedCardIndices.map(i=>myHand[i]);
+                        btnDiscard.disabled = !selectedCards.every(c=>c.v === selectedCards[0].v);
+                    }
+                } else {
+                    drawPileEl.classList.add('actionable');
+                    if(eligibleTrayCard) pickableSpotEl.classList.add('actionable');
+                }
+            }
+
+            // Scoreboard
+            if (status === 'round_over') {
+                this.renderScoreboard(gameData);
+                document.getElementById('scoreboard-screen').classList.add('active-screen');
+                document.getElementById('round-end-message').innerText = roundEndMessage || "Round Over!";
+            }
+        }
+    }
+    
+    renderScoreboard(gameData) {
+        const table = document.getElementById('score-table'); table.innerHTML = '';
+        const players = gameData.players || {}; const playerIds = Object.keys(players);
+        if (playerIds.length === 0) return;
+        let header = '<thead><tr><th>Round</th>'; playerIds.forEach(pid => { if(players[pid]) header += `<th>${players[pid].name}</th>` }); header += '</tr></thead>';
+        let body = '<tbody>'; const totals = playerIds.reduce((acc,pid)=>({...acc,[pid]:0}),{});
+        for (let r = 1; r <= gameData.currentRound; r++) { let row = `<tr><td>${r}</td>`; playerIds.forEach(pid => { if(players[pid]) { const score = gameData.scores?.[r]?.[pid] ?? 0; row += `<td>${score}</td>`; totals[pid] += score; }}); row += '</tr>'; body += row; } body += '</tbody>';
+        let footer = '<tfoot><tr><td>TOTAL</td>'; playerIds.forEach(pid => { if(players[pid]) footer += `<td>${totals[pid]}</td>` }); footer += '</tr></tfoot>';
+        table.innerHTML = header + body + footer;
+    }
+}
+
+window.app = new PointGame();
+window.addEventListener('load', () => { const p = new URLSearchParams(window.location.search); const g = p.get('gameCode'); if (g) { document.getElementById('room-code-input').value = g; app.showJoinInput(); app.showToast("Enter your name to join!"); } });
+</script>
+</body>
+</html>
