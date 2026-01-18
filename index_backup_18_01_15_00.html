@@ -215,16 +215,6 @@
             border-radius: 25px; opacity: 0; pointer-events: none; transition: opacity 0.3s;
             z-index: 10000;
         }
-        #animation-layer { 
-            position: fixed; 
-            top: 0; 
-            left: 0; 
-            width: 100%; 
-            height: 100%; 
-            z-index: 100; 
-            pointer-events: none; 
-            overflow: hidden;
-        }
     </style>
 </head>
 <body>
@@ -233,7 +223,7 @@
         <h1>Please Rotate Your Device</h1>
         <p>This game is best played in Landscape mode.</p>
     </div>
-   
+
     <!-- 1. Start Screen -->
     <div id="start-screen" class="screen active-screen">
         <div class="lobby-box">
@@ -312,7 +302,6 @@
     </div>
 
     <div id="toast">Message</div>
-    <div id="animation-layer"></div>
 
 <script type="module">
 const { initializeApp, getDatabase, ref, set, onValue, get, update, onDisconnect } = window.firebaseSDK;
@@ -339,7 +328,6 @@ class PointGame {
         this.gameCode = null;
         this.gameRef = null;
         this.selectedCardIndices = [];
-        this.lastGameState = {}; // For detecting changes to animate
     }
 
     // --- LOBBY & CONNECTION ---
@@ -697,67 +685,10 @@ class PointGame {
             }
         }
     }
-    animateOpponentPick(source, playerId) {
-        const animationLayer = document.getElementById('animation-layer');
-        
-        // Note: The source for tray pick is the main discard pile in this version
-        const sourceEl = document.getElementById(source === 'draw' ? 'draw-pile' : 'discard-pile');
-        const opponentEl = document.querySelector(`.opponent[data-pid="${playerId}"]`);
-
-        if (!sourceEl || !opponentEl) return;
-
-        const sourceRect = sourceEl.getBoundingClientRect();
-        const opponentRect = opponentEl.getBoundingClientRect();
-        const cardEl = document.createElement('div');
-        if(source==='tray')
-        {
-            cardEl.innerHTML=sourceEl.innerHTML;
-        }
-        else{
-
-        
-            cardEl.className = 'card card-back';
-        }
-        cardEl.style.position = 'fixed';
-        cardEl.style.left = `${sourceRect.left}px`;
-        cardEl.style.top = `${sourceRect.top}px`;
-        cardEl.style.width = `${sourceRect.width}px`;
-        cardEl.style.height = `${sourceRect.height}px`;
-        cardEl.style.transition = 'all 0.6s cubic-bezier(0.5, 0, 0.75, 0)';
-
-        animationLayer.appendChild(cardEl);
-
-        requestAnimationFrame(() => {
-            cardEl.style.transform = `translate(${opponentRect.left - sourceRect.left}px, ${opponentRect.top - sourceRect.top}px) scale(0.2)`;
-            cardEl.style.opacity = '0.5';
-        });
-
-        setTimeout(() => {
-            animationLayer.removeChild(cardEl);
-        }, 600);
-    }
 
     // --- UI RENDERING ---
 
     render(gameData) {
-        
-        if (this.lastGameState.status === 'playing' && gameData.status === 'playing' && gameData.turnIndex !== this.lastGameState.turnIndex) {
-            const lastTurnPlayerId = Object.keys(this.lastGameState.players)[this.lastGameState.turnIndex];
-
-            if (lastTurnPlayerId && lastTurnPlayerId !== this.myId && this.lastGameState.turnPhase === 'pick') {
-                const newDrawCount = (gameData.drawPile || []).length;
-                const oldDrawCount = (this.lastGameState.drawPile || []).length;
-                const newTrayCount = (gameData.tray || []).length;
-                const oldTrayCount = (this.lastGameState.tray || []).length;
-
-                if (newDrawCount < oldDrawCount) {
-                    this.animateOpponentPick('draw', lastTurnPlayerId);
-                } else if (newTrayCount < oldTrayCount) {
-                    this.animateOpponentPick('tray', lastTurnPlayerId);
-                }
-            }
-        }
-
         const { status, players, hostId, turnIndex, turnPhase, settings } = gameData;
 
         if (status === 'lobby') {
@@ -814,7 +745,6 @@ class PointGame {
                     const p = players[pid];
                     let div = document.createElement('div');
                     div.className = `opponent ${pid === currentPlayerId ? 'active-turn' : ''}`;
-                    div.dataset.pid = pid; 
                     div.innerHTML = `<div>${p.name}</div><div class="card-icon">🂠 ${(p.hand || []).length}</div>`;
                     oppContainer.appendChild(div);
                 }
@@ -897,7 +827,6 @@ class PointGame {
                 document.getElementById('round-end-message').innerText = gameData.roundEndMessage || "Round Over!";
             }
         }
-        this.lastGameState = JSON.parse(JSON.stringify(gameData));
     }
     
     renderScoreboard(gameData) {
