@@ -428,8 +428,50 @@ class PointGame {
                 return;
             }
 
-            this.render(gameData);
+            // --- CHANGE: Call the new handler instead of render directly ---
+            this.handleStateUpdate(gameData);
         });
+    }
+    handleStateUpdate(gameData) {
+        // --- THIS IS THE NEW, CORRECTED LOGIC ---
+
+        // 1. First, check if the host needs to take a special action.
+        if (this.isHost && gameData.status === 'calculating_scores') {
+            // If the host sees this status, their ONLY job is to calculate scores.
+            // They should NOT try to render the game board in this state.
+            this._calculateAndSetScores(gameData);
+            return; // Stop processing this specific update immediately.
+        }
+
+        // 2. If no special action is needed, render the UI with the latest data.
+        this.render(gameData);
+
+        // 3. AFTER rendering, check if an animation needs to be triggered.
+        if (
+            this.lastGameState.status === 'playing' &&
+            gameData.status === 'playing' &&
+            gameData.turnIndex !== this.lastGameState.turnIndex
+        ) {
+            const lastPlayers = this.lastGameState.players;
+            if (lastPlayers) { // Safety check
+                const lastTurnPlayerId = Object.keys(lastPlayers)[this.lastGameState.turnIndex];
+                if (lastTurnPlayerId && lastTurnPlayerId !== this.myId && this.lastGameState.turnPhase === 'pick') {
+                    const newDrawCount = (gameData.drawPile || []).length;
+                    const oldDrawCount = (this.lastGameState.drawPile || []).length;
+                    const newTrayCount = (gameData.tray || []).length;
+                    const oldTrayCount = (this.lastGameState.tray || []).length;
+
+                    if (newDrawCount < oldDrawCount) {
+                        this.animateOpponentPick('draw', lastTurnPlayerId);
+                    } else if (newTrayCount < oldTrayCount) {
+                        this.animateOpponentPick('tray', lastTurnPlayerId);
+                    }
+                }
+            }
+        }
+        
+        // 4. FINALLY, update the game's "memory" for the next cycle.
+        this.lastGameState = JSON.parse(JSON.stringify(gameData));
     }
 
     // --- GAME ACTIONS (WRITING TO FIREBASE) ---
@@ -561,70 +603,73 @@ class PointGame {
     
     async actionShow() {
         const gameData = (await get(this.gameRef)).val();
-        const me = gameData.players[this.myId];
-        const mySum = this._calculateHandSum(me.hand);
+        const mySum = this._calculateHandSum(gameData.players[this.myId].hand);
 
         if (mySum > 5) return this.showToast("Sum must be 5 or less to show.");
         
-        if (this.isHost) {
-            await this._calculateAndSetScores(gameData);
-        } else {
-            await update(this.gameRef, { status: 'calculating_scores' });
-        }
+        // --- THIS IS THE FINAL, SIMPLIFIED LOGIC ---
+        // No matter who clicks the button (Host or Client), the action is the same:
+        // Announce to the database that a "Show" has been initiated.
+        await update(this.gameRef, { 
+            status: 'calculating_scores',
+            showInitiatedBy: this.myId 
+        });
+        // That's it. We now rely ENTIRELY on the onValue listener (in handleStateUpdate)
+        // to react to this change, for ALL players, including the host.
+        // This removes the race condition completely.
     }
 
     async _calculateAndSetScores(gameData) {
+        if (gameData.status !== 'calculating_scores') {
+            return;
+        }
+
+        const showerId = gameData.showInitiatedBy; 
+        if (!showerId || !gameData.players[showerId]) return;
+
+        // --- THE FIX IS BELOW ---
+
         const playerIds = Object.keys(gameData.players);
-        const showerId = playerIds[gameData.turnIndex];
         const shower = gameData.players[showerId];
         const showerSum = this._calculateHandSum(shower.hand);
-
         let playerSums = {};
         playerIds.forEach(pid => {
-            playerSums[pid] = this._calculateHandSum(gameData.players[pid].hand);
+            if (gameData.players[pid]) {
+                playerSums[pid] = this._calculateHandSum(gameData.players[pid].hand);
+            }
         });
-
-        // This list is the key: it finds everyone whose score is less than or equal to the person who showed.
         const playersWhoBeatOrTied = Object.keys(playerSums).filter(pid => playerSums[pid] <= showerSum);
         
-        const updates = { status: 'round_over' };
+        const updates = { 
+            status: 'round_over',
+            showInitiatedBy: null
+        };
         const roundScores = {};
         let message = "";
         
-        // This is the one and only condition for a clean win.
         if (playersWhoBeatOrTied.length === 1 && playersWhoBeatOrTied[0] === showerId) {
-            // SCENARIO A: CLEAN WIN
             message = `${shower.name} wins with the lowest score!`;
             playerIds.forEach(pid => {
-                roundScores[pid] = (pid === showerId) ? 0 : playerSums[pid];
+                // CORRECTED LINE:
+                if (gameData.players[pid]) roundScores[pid] = (pid === showerId) ? 0 : playerSums[pid];
             });
         } else {
-            // SCENARIO B & C: WRONG SHOW or TIE WIN
-            // This block is entered if anyone else had an equal or better score.
-
-            // 1. Calculate the penalty for the show-er.
-            // The penalty is based on the number of other players who beat or tied them.
             const penaltyCount = playersWhoBeatOrTied.filter(pid => pid !== showerId).length;
             const penalty = 30 * penaltyCount;
-
             message = `${shower.name} made a wrong show!`;
             if (showerSum === 0 && playersWhoBeatOrTied.length > 1) {
                  message = `A 0-0 tie! Multiple players get 0.`;
             }
-            
-            // 2. Assign scores to every player.
             playerIds.forEach(pid => {
-                if (playersWhoBeatOrTied.includes(pid)) {
-                    // Per your rule: ANYONE who beat or tied the show-er is a "winner" and gets 0.
-                    roundScores[pid] = 0;
-                } else {
-                    // Anyone who had a worse (higher) score gets their sum.
-                    roundScores[pid] = playerSums[pid];
+                // CORRECTED LINE:
+                if (gameData.players[pid]) {
+                    if (playersWhoBeatOrTied.includes(pid)) {
+                        roundScores[pid] = 0;
+                    } else {
+                        roundScores[pid] = playerSums[pid];
+                    }
                 }
             });
-
-            // 3. CRITICAL FINAL STEP: After assigning the base scores,
-            // we overwrite the show-er's score with their calculated penalty.
             roundScores[showerId] = penalty;
         }
         
@@ -699,8 +744,6 @@ class PointGame {
     }
     animateOpponentPick(source, playerId) {
         const animationLayer = document.getElementById('animation-layer');
-        
-        // Note: The source for tray pick is the main discard pile in this version
         const sourceEl = document.getElementById(source === 'draw' ? 'draw-pile' : 'discard-pile');
         const opponentEl = document.querySelector(`.opponent[data-pid="${playerId}"]`);
 
@@ -709,15 +752,31 @@ class PointGame {
         const sourceRect = sourceEl.getBoundingClientRect();
         const opponentRect = opponentEl.getBoundingClientRect();
         const cardEl = document.createElement('div');
-        if(source==='tray')
-        {
-            cardEl.innerHTML=sourceEl.innerHTML;
-        }
-        else{
 
-        
+        if (source === 'tray') {
+            const eligibleIndex = this.lastGameState.eligibleTrayCardIndex;
+            const lastTray = this.lastGameState.tray;
+
+            if (eligibleIndex > -1 && lastTray && lastTray[eligibleIndex]) {
+                const pickedCardData = lastTray[eligibleIndex];
+                
+                // --- THIS IS THE CORRECTED LOGIC ---
+                const { display, color } = this._getCardDisplay(pickedCardData);
+                const isJoker = pickedCardData.s === 'Joker';
+                
+                cardEl.className = `card ${color} ${isJoker ? 'joker' : ''}`;
+                cardEl.innerHTML = `<div class="card-corner">${display}<br>${isJoker ? '' : pickedCardData.s}</div>
+                                    <div class="card-center">${isJoker ? 'JOKER' : pickedCardData.s}</div>
+                                    <div class="card-corner bottom">${display}<br>${isJoker ? '' : pickedCardData.s}</div>`;
+                // --- END OF CORRECTION ---
+
+            } else {
+                cardEl.className = 'card card-back';
+            }
+        } else {
             cardEl.className = 'card card-back';
         }
+        
         cardEl.style.position = 'fixed';
         cardEl.style.left = `${sourceRect.left}px`;
         cardEl.style.top = `${sourceRect.top}px`;
@@ -733,31 +792,15 @@ class PointGame {
         });
 
         setTimeout(() => {
-            animationLayer.removeChild(cardEl);
+            if (animationLayer.contains(cardEl)) {
+                animationLayer.removeChild(cardEl);
+            }
         }, 600);
     }
 
     // --- UI RENDERING ---
 
     render(gameData) {
-        
-        if (this.lastGameState.status === 'playing' && gameData.status === 'playing' && gameData.turnIndex !== this.lastGameState.turnIndex) {
-            const lastTurnPlayerId = Object.keys(this.lastGameState.players)[this.lastGameState.turnIndex];
-
-            if (lastTurnPlayerId && lastTurnPlayerId !== this.myId && this.lastGameState.turnPhase === 'pick') {
-                const newDrawCount = (gameData.drawPile || []).length;
-                const oldDrawCount = (this.lastGameState.drawPile || []).length;
-                const newTrayCount = (gameData.tray || []).length;
-                const oldTrayCount = (this.lastGameState.tray || []).length;
-
-                if (newDrawCount < oldDrawCount) {
-                    this.animateOpponentPick('draw', lastTurnPlayerId);
-                } else if (newTrayCount < oldTrayCount) {
-                    this.animateOpponentPick('tray', lastTurnPlayerId);
-                }
-            }
-        }
-
         const { status, players, hostId, turnIndex, turnPhase, settings } = gameData;
 
         if (status === 'lobby') {
@@ -784,13 +827,10 @@ class PointGame {
                 list.appendChild(li);
             });
 
-        } else if (status === 'playing' || status === 'round_over' || status === 'calculating_scores') {
+        } else if (status === 'playing' || status === 'round_over') { // NOTE: 'calculating_scores' is removed from here.
             this.showScreen('game-screen');
             
-            if (this.isHost && status === 'calculating_scores') {
-                this._calculateAndSetScores(gameData);
-                return; 
-            }
+            // The logic block for the host to calculate scores has been completely REMOVED from here.
             
             const playerIds = Object.keys(players);
             const me = players[this.myId];
@@ -798,7 +838,8 @@ class PointGame {
             
             const myHand = me.hand || [];
             const currentPlayerId = playerIds[turnIndex];
-            const currentPlayer = players[currentPlayerId];
+            // Safety check for currentPlayer
+            const currentPlayer = players[currentPlayerId] || { name: 'Unknown' };
             const isMyTurn = currentPlayerId === this.myId;
 
             // Top bar
@@ -810,7 +851,7 @@ class PointGame {
             const oppContainer = document.getElementById('opponents');
             oppContainer.innerHTML = '';
             playerIds.forEach(pid => {
-                if (pid !== this.myId) {
+                if (pid !== this.myId && players[pid]) { // Added safety check
                     const p = players[pid];
                     let div = document.createElement('div');
                     div.className = `opponent ${pid === currentPlayerId ? 'active-turn' : ''}`;
@@ -857,7 +898,7 @@ class PointGame {
                 cDiv.onclick = () => {
                     if (isMyTurn && turnPhase === 'discard') {
                         this._toggleCardSelect(realIndex, myHand);
-                        this.render(gameData);
+                        this.render(gameData); // Re-rendering for selection is fine
                     }
                 };
                 if (this.selectedCardIndices.includes(realIndex)) cDiv.classList.add('selected');
@@ -897,7 +938,6 @@ class PointGame {
                 document.getElementById('round-end-message').innerText = gameData.roundEndMessage || "Round Over!";
             }
         }
-        this.lastGameState = JSON.parse(JSON.stringify(gameData));
     }
     
     renderScoreboard(gameData) {

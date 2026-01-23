@@ -428,36 +428,8 @@ class PointGame {
                 return;
             }
 
-            this.handleStateUpdate(gameData);
+            this.render(gameData);
         });
-    }
-    
-    handleStateUpdate(gameData) {
-        if (
-            this.lastGameState.status === 'playing' &&
-            gameData.status === 'playing' &&
-            this.lastGameState.players && gameData.players &&
-            gameData.turnIndex !== this.lastGameState.turnIndex
-        ) {
-            const lastTurnPlayerId = Object.keys(this.lastGameState.players)[this.lastGameState.turnIndex];
-
-            if (lastTurnPlayerId && lastTurnPlayerId !== this.myId && this.lastGameState.turnPhase === 'pick') {
-                const newDrawCount = (gameData.drawPile || []).length;
-                const oldDrawCount = (this.lastGameState.drawPile || []).length;
-                const newTrayCount = (gameData.tray || []).length;
-                const oldTrayCount = (this.lastGameState.tray || []).length;
-
-                if (newDrawCount < oldDrawCount) {
-                    this.animateOpponentPick('draw', lastTurnPlayerId);
-                } else if (newTrayCount < oldTrayCount) {
-                    this.animateOpponentPick('tray', lastTurnPlayerId);
-                }
-            }
-        }
-
-        this.render(gameData);
-
-        this.lastGameState = JSON.parse(JSON.stringify(gameData));
     }
 
     // --- GAME ACTIONS (WRITING TO FIREBASE) ---
@@ -495,7 +467,7 @@ class PointGame {
         if (!this.isHost) return;
 
         const playersSnapshot = await get(ref(db, `games/${this.gameCode}/players`));
-        const playerIds = Object.keys(playersSnapshot.val() || {}).filter(pId => playersSnapshot.val()[pId]);
+        const playerIds = Object.keys(playersSnapshot.val() || {});
         
         let deck = this._createDeck();
         deck = this._shuffle(deck);
@@ -539,7 +511,7 @@ class PointGame {
 
     async pickCard(source) {
         const gameData = (await get(this.gameRef)).val();
-        const playerIds = Object.keys(gameData.players).filter(pId => gameData.players[pId]);
+        const playerIds = Object.keys(gameData.players);
         if (playerIds[gameData.turnIndex] !== this.myId || gameData.turnPhase !== 'pick') return;
 
         let pickedCard;
@@ -602,10 +574,8 @@ class PointGame {
     }
 
     async _calculateAndSetScores(gameData) {
-        const playerIds = Object.keys(gameData.players).filter(pId => gameData.players[pId]);
+        const playerIds = Object.keys(gameData.players);
         const showerId = playerIds[gameData.turnIndex];
-        
-        if (!gameData.players[showerId]) return; // Failsafe if shower disconnects
         const shower = gameData.players[showerId];
         const showerSum = this._calculateHandSum(shower.hand);
 
@@ -614,18 +584,26 @@ class PointGame {
             playerSums[pid] = this._calculateHandSum(gameData.players[pid].hand);
         });
 
+        // This list is the key: it finds everyone whose score is less than or equal to the person who showed.
         const playersWhoBeatOrTied = Object.keys(playerSums).filter(pid => playerSums[pid] <= showerSum);
         
         const updates = { status: 'round_over' };
         const roundScores = {};
         let message = "";
         
+        // This is the one and only condition for a clean win.
         if (playersWhoBeatOrTied.length === 1 && playersWhoBeatOrTied[0] === showerId) {
+            // SCENARIO A: CLEAN WIN
             message = `${shower.name} wins with the lowest score!`;
             playerIds.forEach(pid => {
                 roundScores[pid] = (pid === showerId) ? 0 : playerSums[pid];
             });
         } else {
+            // SCENARIO B & C: WRONG SHOW or TIE WIN
+            // This block is entered if anyone else had an equal or better score.
+
+            // 1. Calculate the penalty for the show-er.
+            // The penalty is based on the number of other players who beat or tied them.
             const penaltyCount = playersWhoBeatOrTied.filter(pid => pid !== showerId).length;
             const penalty = 30 * penaltyCount;
 
@@ -634,13 +612,19 @@ class PointGame {
                  message = `A 0-0 tie! Multiple players get 0.`;
             }
             
+            // 2. Assign scores to every player.
             playerIds.forEach(pid => {
                 if (playersWhoBeatOrTied.includes(pid)) {
+                    // Per your rule: ANYONE who beat or tied the show-er is a "winner" and gets 0.
                     roundScores[pid] = 0;
                 } else {
+                    // Anyone who had a worse (higher) score gets their sum.
                     roundScores[pid] = playerSums[pid];
                 }
             });
+
+            // 3. CRITICAL FINAL STEP: After assigning the base scores,
+            // we overwrite the show-er's score with their calculated penalty.
             roundScores[showerId] = penalty;
         }
         
@@ -681,7 +665,6 @@ class PointGame {
     }
     
     _getCardDisplay(card) {
-        if(!card) return { display: '', color: 'black'}; // Failsafe
         if (card.s === 'Joker') return { display: 'JOKER', color: 'black' };
         const color = ['♥', '♦'].includes(card.s) ? 'red' : 'black';
         let display;
@@ -732,6 +715,7 @@ class PointGame {
             if (eligibleIndex > -1 && lastTray && lastTray[eligibleIndex]) {
                 const pickedCardData = lastTray[eligibleIndex];
                 
+                // --- THIS IS THE CORRECTED LOGIC ---
                 const { display, color } = this._getCardDisplay(pickedCardData);
                 const isJoker = pickedCardData.s === 'Joker';
                 
@@ -739,6 +723,8 @@ class PointGame {
                 cardEl.innerHTML = `<div class="card-corner">${display}<br>${isJoker ? '' : pickedCardData.s}</div>
                                     <div class="card-center">${isJoker ? 'JOKER' : pickedCardData.s}</div>
                                     <div class="card-corner bottom">${display}<br>${isJoker ? '' : pickedCardData.s}</div>`;
+                // --- END OF CORRECTION ---
+
             } else {
                 cardEl.className = 'card card-back';
             }
@@ -768,7 +754,26 @@ class PointGame {
     }
 
     // --- UI RENDERING ---
+
     render(gameData) {
+        
+        if (this.lastGameState.status === 'playing' && gameData.status === 'playing' && gameData.turnIndex !== this.lastGameState.turnIndex) {
+            const lastTurnPlayerId = Object.keys(this.lastGameState.players)[this.lastGameState.turnIndex];
+
+            if (lastTurnPlayerId && lastTurnPlayerId !== this.myId && this.lastGameState.turnPhase === 'pick') {
+                const newDrawCount = (gameData.drawPile || []).length;
+                const oldDrawCount = (this.lastGameState.drawPile || []).length;
+                const newTrayCount = (gameData.tray || []).length;
+                const oldTrayCount = (this.lastGameState.tray || []).length;
+
+                if (newDrawCount < oldDrawCount) {
+                    this.animateOpponentPick('draw', lastTurnPlayerId);
+                } else if (newTrayCount < oldTrayCount) {
+                    this.animateOpponentPick('tray', lastTurnPlayerId);
+                }
+            }
+        }
+
         const { status, players, hostId, turnIndex, turnPhase, settings } = gameData;
 
         if (status === 'lobby') {
@@ -777,12 +782,11 @@ class PointGame {
             document.getElementById('host-settings').style.display = this.isHost ? 'block' : 'none';
             document.getElementById('start-game-btn').style.display = this.isHost ? 'block' : 'none';
             document.getElementById('waiting-text').style.display = this.isHost ? 'none' : 'block';
-            if(this.isHost && settings) document.getElementById('late-penalty-input').value = settings.latePenalty;
+            if(this.isHost) document.getElementById('late-penalty-input').value = settings.latePenalty;
 
             const list = document.getElementById('lobby-list');
             list.innerHTML = '';
             Object.entries(players || {}).forEach(([pid, p]) => {
-                if (!p) return;
                 let li = document.createElement('li');
                 li.innerHTML = `<span>${p.name} ${pid === hostId ? '👑' : ''}</span><span style="color:${p.online ? 'lightgreen' : 'gray'}">${p.online ? 'Online' : 'Offline'}</span>`;
                 if (this.isHost && pid !== this.myId) {
@@ -804,8 +808,7 @@ class PointGame {
                 return; 
             }
             
-            const playerIds = Object.keys(players || {}).filter(pId => players[pId]);
-            if(playerIds.length === 0) return;
+            const playerIds = Object.keys(players);
             const me = players[this.myId];
             if (!me) return;
             
@@ -814,10 +817,12 @@ class PointGame {
             const currentPlayer = players[currentPlayerId];
             const isMyTurn = currentPlayerId === this.myId;
 
+            // Top bar
             document.getElementById('game-room-id').innerText = this.gameCode;
             document.getElementById('round-indicator').innerText = `Round: ${gameData.currentRound}`;
-            document.getElementById('turn-indicator').innerText = isMyTurn ? `YOUR TURN (${turnPhase.toUpperCase()})` : `${currentPlayer?.name || '...'}s Turn`;
+            document.getElementById('turn-indicator').innerText = isMyTurn ? `YOUR TURN (${turnPhase.toUpperCase()})` : `${currentPlayer.name}'s Turn`;
 
+            // Opponents
             const oppContainer = document.getElementById('opponents');
             oppContainer.innerHTML = '';
             playerIds.forEach(pid => {
@@ -831,6 +836,7 @@ class PointGame {
                 }
             });
 
+            // Decks
             const drawPileEl = document.getElementById('draw-pile');
             const discardPileEl = document.getElementById('discard-pile');
             document.getElementById('draw-count').innerText = (gameData.drawPile || []).length;
@@ -853,39 +859,28 @@ class PointGame {
                 discardPileEl.innerHTML = `<span>TRAY<br>(Empty)</span>`;
             }
             
+            // My Hand
             const handContainer = document.getElementById('hand-container');
             handContainer.innerHTML = '';
-            myHand.forEach((card, index) => {
+            myHand.slice().sort((a,b) => a.v - b.v).forEach((card) => {
+                const realIndex = myHand.findIndex(c => c === card);
                 const { display, color } = this._getCardDisplay(card);
                 const isJoker = card.s === 'Joker';
                 let cDiv = document.createElement('div');
                 cDiv.className = `card ${color} ${isJoker ? 'joker' : ''}`;
-                cDiv.dataset.index = index;
+                cDiv.dataset.index = realIndex;
                 cDiv.innerHTML = `<div class="card-corner">${display}<br>${isJoker ? '' : card.s}</div><div class="card-center">${isJoker ? 'JOKER' : card.s}</div><div class="card-corner bottom">${display}<br>${isJoker ? '' : card.s}</div>`;
                 cDiv.onclick = () => {
                     if (isMyTurn && turnPhase === 'discard') {
-                        this._toggleCardSelect(index, myHand);
-                        
-                        document.querySelectorAll('#hand-container .card').forEach(el => el.classList.remove('selected'));
-                        this.selectedCardIndices.forEach(i => {
-                            const cardToSelect = handContainer.querySelector(`[data-index='${i}']`);
-                            if(cardToSelect) cardToSelect.classList.add('selected');
-                        });
-                        
-                        const btnDiscard = document.getElementById('btn-discard');
-                        if (this.selectedCardIndices.length > 0) {
-                            const selectedCards = this.selectedCardIndices.map(i => myHand[i]);
-                            const allSame = selectedCards.every(c => c.v === selectedCards[0].v);
-                            btnDiscard.disabled = !allSame || selectedCards.length === 0;
-                        } else {
-                            btnDiscard.disabled = true;
-                        }
+                        this._toggleCardSelect(realIndex, myHand);
+                        this.render(gameData);
                     }
                 };
-                if (this.selectedCardIndices.includes(index)) cDiv.classList.add('selected');
+                if (this.selectedCardIndices.includes(realIndex)) cDiv.classList.add('selected');
                 handContainer.appendChild(cDiv);
             });
 
+            // Controls
             const btnDiscard = document.getElementById('btn-discard');
             const btnShow = document.getElementById('btn-show');
             const currentSum = this._calculateHandSum(myHand);
@@ -918,39 +913,45 @@ class PointGame {
                 document.getElementById('round-end-message').innerText = gameData.roundEndMessage || "Round Over!";
             }
         }
+        this.lastGameState = JSON.parse(JSON.stringify(gameData));
     }
     
     renderScoreboard(gameData) {
         const table = document.getElementById('score-table');
         table.innerHTML = '';
         const players = gameData.players || {};
-        const playerIds = Object.keys(players).filter(pId => players[pId]);
+        const playerIds = Object.keys(players);
         if (playerIds.length === 0) return;
 
+        // Header
         const thead = document.createElement('thead');
         let headerRow = '<tr><th>Round</th>';
-        playerIds.forEach(pid => { headerRow += `<th>${players[pid].name}</th>` });
+        playerIds.forEach(pid => { if(players[pid]) headerRow += `<th>${players[pid].name}</th>` });
         headerRow += '</tr>';
         thead.innerHTML = headerRow;
         table.appendChild(thead);
 
+        // Body
         const tbody = document.createElement('tbody');
         const totals = playerIds.reduce((acc, pid) => ({ ...acc, [pid]: 0 }), {});
         for (let r = 1; r <= gameData.currentRound; r++) {
             let row = `<tr><td>${r}</td>`;
             playerIds.forEach(pid => {
-                const score = gameData.scores?.[r]?.[pid] ?? 0;
-                row += `<td>${score}</td>`;
-                totals[pid] += score;
+                if(players[pid]) {
+                    const score = gameData.scores?.[r]?.[pid] ?? 0;
+                    row += `<td>${score}</td>`;
+                    totals[pid] += score;
+                }
             });
             row += '</tr>';
             tbody.innerHTML += row;
         }
         table.appendChild(tbody);
 
+        // Footer
         const tfoot = document.createElement('tfoot');
         let footerRow = '<tr><td>TOTAL</td>';
-        playerIds.forEach(pid => { footerRow += `<td>${totals[pid]}</td>` });
+        playerIds.forEach(pid => { if(players[pid]) footerRow += `<td>${totals[pid]}</td>` });
         footerRow += '</tr>';
         tfoot.innerHTML = footerRow;
         table.appendChild(tfoot);
