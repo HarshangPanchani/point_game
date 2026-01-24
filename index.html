@@ -62,6 +62,38 @@
             transition: opacity 0.3s;
         }
         .active-screen { display: flex; }
+        /* --- NEW START SCREEN STYLES --- */
+        #start-screen h1 {
+            font-size: 3em;
+            letter-spacing: 4px;
+            margin-bottom: 20px;
+            color: var(--text-light);
+        }
+        #start-screen .lobby-box {
+            background: #012A1B; /* Darker, less transparent green */
+            border-radius: 20px;
+        }
+        #start-screen input[type="text"] {
+            background: #fff;
+            border: 3px solid transparent;
+            border-radius: 12px;
+            font-size: 1.1em;
+            padding: 15px;
+            margin-bottom: 10px;
+            transition: border-color 0.2s;
+        }
+        #start-screen input[type="text"]:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+        #start-actions {
+            display: flex;
+            justify-content: center;
+            width: 100%;
+        }
+        #start-actions button {
+            flex-grow: 1;
+        }
 
         /* UI Elements */
         input, button {
@@ -237,15 +269,14 @@
     <!-- 1. Start Screen -->
     <div id="start-screen" class="screen active-screen">
         <div class="lobby-box">
-            <h1>POINT</h1>
+            <h1>PIKI POINT</h1>
             <input type="text" id="username" placeholder="Enter Your Name" maxlength="12">
-            <div>
+            <div id="start-actions">
                 <button onclick="app.createLobby()" class="accent">Create Lobby</button>
-                <button onclick="app.showJoinInput()">Join Lobby</button>
+                <button onclick="app.connectToLobby()">Join Lobby</button>
             </div>
             <div id="join-container" style="display:none; margin-top:10px;">
                 <input type="text" id="room-code-input" placeholder="Enter Lobby Code" style="text-transform:uppercase;">
-                <button onclick="app.joinLobby()">Connect</button>
             </div>
         </div>
     </div>
@@ -362,11 +393,36 @@ class PointGame {
         const url = window.location.href.split('?')[0] + '?gameCode=' + this.gameCode;
         navigator.clipboard.writeText(url).then(() => this.showToast('Game link copied!'));
     }
+    async enterFullscreenAndLockOrientation() {
+        try {
+            if (document.documentElement.requestFullscreen) {
+                await document.documentElement.requestFullscreen();
+            } else if (document.documentElement.webkitRequestFullscreen) { /* Safari */
+                await document.documentElement.webkitRequestFullscreen();
+            }
+
+            // After entering fullscreen, try to lock orientation.
+            // This may fail on some browsers (especially iOS), so we wrap it in a try-catch.
+            try {
+                await screen.orientation.lock('landscape');
+            } catch (err) {
+                console.warn("Screen orientation lock failed:", err);
+            }
+        } catch (err) {
+            console.error("Could not enter fullscreen mode:", err);
+        }
+    }
 
     async createLobby() {
         this.myName = document.getElementById('username').value.trim();
-        if (!this.myName) return this.showToast("Please enter your name.");
+        if (!this.myName) {
+            this.showToast("Please enter your name.");
+            return;
+        }
         
+        // --- NEW: Trigger fullscreen when starting ---
+        await this.enterFullscreenAndLockOrientation();
+
         this.isHost = true;
         this.gameCode = Math.random().toString(36).substring(2, 8).toUpperCase();
         this.gameRef = ref(db, 'games/' + this.gameCode);
@@ -383,16 +439,41 @@ class PointGame {
         this.listenForGameUpdates();
     }
 
-    async joinLobby() {
+    // --- REPLACEMENT FOR THE OLD showJoinInput() ---
+    joinLobby() {
         this.myName = document.getElementById('username').value.trim();
+        if (!this.myName) {
+            this.showToast("Please enter your name.");
+            return;
+        }
+        // This function now just shows the input field.
+        document.getElementById('start-actions').style.display = 'none';
+        document.getElementById('join-container').style.display = 'block';
+        document.getElementById('room-code-input').focus();
+    }
+    
+    // --- NEW FUNCTION TO HANDLE THE FINAL CONNECTION ---
+    async connectToLobby() {
         const code = document.getElementById('room-code-input').value.trim().toUpperCase();
-        if (!this.myName || !code) return this.showToast("Enter name and code.");
+        if (!code) {
+            this.showToast("Please enter a lobby code.");
+            return;
+        }
+
+        // --- NEW: Trigger fullscreen when joining ---
+        await this.enterFullscreenAndLockOrientation();
 
         this.gameCode = code;
         this.gameRef = ref(db, 'games/' + this.gameCode);
 
         const snapshot = await get(this.gameRef);
-        if (!snapshot.exists()) return this.showToast("Game code not found.");
+        if (!snapshot.exists()) {
+            this.showToast("Game code not found.");
+            // Reset UI if connection fails
+            document.getElementById('start-actions').style.display = 'flex';
+            document.getElementById('join-container').style.display = 'none';
+            return;
+        }
 
         const gameData = snapshot.val();
         const updates = {
