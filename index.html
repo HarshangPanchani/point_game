@@ -124,7 +124,7 @@
             /* This is a trick to make a non-visual origin point for calculations */
             width: 1px;
             height: 1px;
-            z-index: 5;
+            
         }
         
         .opponent {
@@ -210,6 +210,22 @@
         /* Scoreboard Table */
         #scoreboard-screen { background: rgba(0,0,0,0.85); backdrop-filter: blur(5px); }
         #scoreboard-container { background: var(--bg-color); border: 2px solid var(--accent); border-radius: 12px; padding: 20px; width: 95vw; max-width: 800px; max-height: 90vh; overflow: auto; }
+        #player-list-screen { background: rgba(0,0,0,0.85); backdrop-filter: blur(5px); }
+        #game-player-list {
+            list-style: none; padding: 0; width: 100%;
+            background: rgba(0,0,0,0.3); border-radius: 10px; margin-top: 15px;
+        }
+        #game-player-list li {
+            padding: 12px; border-bottom: 1px solid rgba(255,255,255,0.1);
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .kick-btn {
+            background: var(--danger);
+            font-size: 12px;
+            padding: 6px 12px;
+            margin: 0;
+            box-shadow: none;
+        }
         #how-to-play-screen { background: rgba(0,0,0,0.85); backdrop-filter: blur(5px); }
         #how-to-play-container { background: var(--bg-color); border: 2px solid var(--accent); border-radius: 12px; padding: 20px; width: 95vw; max-width: 800px; max-height: 90vh; display: flex; flex-direction: column; }
         #rules-content { overflow-y: auto; padding-right: 15px; }
@@ -309,6 +325,7 @@
                     <button id="btn-show" onclick="app.actionShow()" class="danger" disabled>SHOW</button>
                     <button id="btn-discard" onclick="app.actionDiscard()" disabled>DISCARD</button>
                     <button id="btn-scoreboard" onclick="app.showScoreboard()">SCORE</button>
+                    <button id="btn-players" onclick="app.showPlayerList()">PLAYERS</button>
                     <button id="btn-how-to-play" onclick="app.showHowToPlay()">HOW TO PLAY</button>
                     <button id="btn-fullscreen" onclick="app.toggleFullscreen()">FULLSCREEN</button>
                 </div>
@@ -391,6 +408,19 @@
 
             <div style="margin-top:20px; text-align:center;">
                 <button onclick="app.closeHowToPlay()" id="close-how-to-play-btn">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 6. Player List Screen -->
+    <div id="player-list-screen" class="screen">
+        <div class="lobby-box">
+            <h2 style="text-align:center;">Player List</h2>
+            <ul id="game-player-list">
+                <!-- Player list will be rendered here by JavaScript -->
+            </ul>
+            <div style="margin-top:20px; text-align:center;">
+                <button onclick="app.closePlayerList()" id="close-player-list-btn">Close</button>
             </div>
         </div>
     </div>
@@ -575,16 +605,34 @@ class PointGame {
     async kickPlayer(playerId) {
         if (!this.isHost) return;
         
+        const gameData = (await get(this.gameRef)).val();
+        if (!gameData.players[playerId]) return; // Player already gone
+
         const updates = { [`players/${playerId}`]: null };
 
-        const snapshot = await get(this.gameRef);
-        const gameData = snapshot.val();
+        // Remove from scores
         if (gameData.scores) {
             Object.keys(gameData.scores).forEach(roundNum => {
                 updates[`scores/${roundNum}/${playerId}`] = null;
             });
         }
+
+        // --- CRITICAL ADDITION: Handle if the kicked player is the current turn ---
+        const playerIds = Object.keys(gameData.players);
+        const currentPlayerId = playerIds[gameData.turnIndex];
+
+        if (currentPlayerId === playerId) {
+            // Find the next active player to prevent the game from getting stuck
+            let nextIndex = gameData.turnIndex;
+            do {
+                nextIndex = (nextIndex + 1) % playerIds.length;
+            } while (playerIds[nextIndex] === playerId); // Loop until we find a player that isn't the one being kicked
+            
+            updates.turnIndex = nextIndex;
+        }
+
         await update(this.gameRef, updates);
+        this.showToast(`${gameData.players[playerId].name} has been kicked.`);
     }
     
     async startGame() {
@@ -832,6 +880,39 @@ class PointGame {
     closeHowToPlay() { document.getElementById('how-to-play-screen').classList.remove('active-screen'); }
     // --- CARD & DECK LOGIC (PRIVATE) ---
 
+    showPlayerList() { 
+        // We call render one more time to ensure the list is up-to-date
+        this.renderPlayerList(this.lastGameState); 
+        document.getElementById('player-list-screen').classList.add('active-screen');
+    }
+
+    closePlayerList() { document.getElementById('player-list-screen').classList.remove('active-screen'); }
+
+    renderPlayerList(gameData) {
+        const { players, hostId } = gameData;
+        const listEl = document.getElementById('game-player-list');
+        listEl.innerHTML = '';
+
+        if (!players) return;
+
+        Object.entries(players).forEach(([pid, p]) => {
+            if (!p) return; // Skip if player data is null (e.g., just kicked)
+            
+            let li = document.createElement('li');
+            li.innerHTML = `<span>${p.name} ${pid === hostId ? '👑' : ''}</span>`;
+            
+            // If I am the host AND this player is not me, show the kick button
+            if (this.isHost && pid !== this.myId) {
+                let kickBtn = document.createElement('button');
+                kickBtn.innerText = 'Kick';
+                kickBtn.className = 'kick-btn';
+                kickBtn.onclick = () => this.kickPlayer(pid);
+                li.appendChild(kickBtn);
+            }
+            listEl.appendChild(li);
+        });
+    }
+
     _createDeck() {
         let deck = [];
         const SUITS = ['♥', '♦', '♣', '♠'];
@@ -840,7 +921,7 @@ class PointGame {
                 for (let v = 1; v <= 13; v++) deck.push({ v, s });
             }
         }
-        for (let j = 0; j < 5; j++) deck.push({ v: 0, s: 'Joker' });
+        for (let j = 0; j < 7; j++) deck.push({ v: 0, s: 'Joker' });
         return deck;
     }
 
