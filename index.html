@@ -210,6 +210,12 @@
         /* Scoreboard Table */
         #scoreboard-screen { background: rgba(0,0,0,0.85); backdrop-filter: blur(5px); }
         #scoreboard-container { background: var(--bg-color); border: 2px solid var(--accent); border-radius: 12px; padding: 20px; width: 95vw; max-width: 800px; max-height: 90vh; overflow: auto; }
+        #how-to-play-screen { background: rgba(0,0,0,0.85); backdrop-filter: blur(5px); }
+        #how-to-play-container { background: var(--bg-color); border: 2px solid var(--accent); border-radius: 12px; padding: 20px; width: 95vw; max-width: 800px; max-height: 90vh; display: flex; flex-direction: column; }
+        #rules-content { overflow-y: auto; padding-right: 15px; }
+        #rules-content h3 { color: var(--accent); border-bottom: 1px solid var(--accent); padding-bottom: 5px; margin-top: 20px; }
+        #rules-content p, #rules-content li { line-height: 1.6; }
+        #rules-content strong { color: #fefefe; }
         table { width: 100%; border-collapse: collapse; background: white; color: black; font-size: 14px; }
         th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
         th { background: #eee; }
@@ -303,6 +309,7 @@
                     <button id="btn-show" onclick="app.actionShow()" class="danger" disabled>SHOW</button>
                     <button id="btn-discard" onclick="app.actionDiscard()" disabled>DISCARD</button>
                     <button id="btn-scoreboard" onclick="app.showScoreboard()">SCORE</button>
+                    <button id="btn-how-to-play" onclick="app.showHowToPlay()">HOW TO PLAY</button>
                     <button id="btn-fullscreen" onclick="app.toggleFullscreen()">FULLSCREEN</button>
                 </div>
             </div>
@@ -317,6 +324,73 @@
             <table id="score-table"></table>
             <div style="margin-top:20px; text-align:center;">
                 <button onclick="app.closeScoreboard()" id="close-scoreboard-btn">Close</button>
+            </div>
+        </div>
+    </div>
+    <!-- 5. How to Play Screen -->
+    <div id="how-to-play-screen" class="screen">
+        <div id="how-to-play-container">
+            <h2 style="text-align:center;">How to Play POINT</h2>
+            
+            <div id="rules-content">
+                <h3>Objective</h3>
+                <p>The goal is to have the <strong>lowest possible sum</strong> of card values in your hand at the end of a round.</p>
+
+                <h3>Card Values</h3>
+                <ul>
+                    <li><strong>Joker:</strong> 0 points</li>
+                    <li><strong>Ace (A):</strong> 1 point</li>
+                    <li><strong>Cards 2-10:</strong> Face value (e.g., a '7' is 7 points)</li>
+                    <li><strong>Jack (J):</strong> 11 points</li>
+                    <li><strong>Queen (Q):</strong> 12 points</li>
+                    <li><strong>King (K):</strong> 13 points</li>
+                </ul>
+
+                <h3>The Turn</h3>
+                <p>Each turn has two steps, in this specific order:</p>
+                <ol>
+                    <li><strong>DISCARD:</strong> Place one or more cards from your hand into the Tray.
+                        <ul>
+                            <li>You may discard a single card of any value.</li>
+                            <li>To discard multiple cards, they <strong>must all have the same value</strong> (e.g., three 8s, two Kings).</li>
+                        </ul>
+                    </li>
+                    <li><strong>PICK:</strong> After discarding, you <strong>must</strong> pick exactly one new card from one of two places:
+                        <ul>
+                            <li>The face-down <strong>Draw Pile</strong>.</li>
+                            <li>The card on top of the <strong>Tray</strong> that the *previous player* discarded.</li>
+                        </ul>
+                    </li>
+                </ol>
+
+                <h3>Declaring a "Show"</h3>
+                <ul>
+                    <li>You can only declare a "Show" at the <strong>very start of your turn</strong>, before you discard.</li>
+                    <li>You can only do this if the total sum of your cards is <strong>5 or less</strong>.</li>
+                </ul>
+
+                <h3>Scoring</h3>
+                <p>When a player "Shows," the round ends and points are calculated:</p>
+                <ul>
+                    <li><strong>Clean Win:</strong> If the player who Showed has the *strictly lowest* score, they get <strong>0 points</strong>. Everyone else gets points equal to their hand's sum.</li>
+                    <li><strong>Wrong Show / Tie:</strong> If another player has a score equal to or lower than the person who Showed:
+                        <ul>
+                            <li>The <strong>Winners</strong> (all players with the lowest score) get <strong>0 points</strong>.</li>
+                            <li>The person who <strong>Showed</strong> gets a penalty: <strong>30 points × (number of players who beat or tied them)</strong>.</li>
+                            <li>All <strong>other</strong> players get points equal to their hand's sum.</li>
+                        </ul>
+                    </li>
+                </ul>
+
+                <h3>Special Rules</h3>
+                <ul>
+                    <li><strong>Late Joiners:</strong> If you join a game in progress, your turn will be skipped until the next round begins. You will receive a penalty score for any rounds you missed.</li>
+                    <li><strong>Empty Deck:</strong> If the Draw Pile runs out, the Tray is automatically shuffled (except for the last-played card) to create a new Draw Pile.</li>
+                </ul>
+            </div>
+
+            <div style="margin-top:20px; text-align:center;">
+                <button onclick="app.closeHowToPlay()" id="close-how-to-play-btn">Close</button>
             </div>
         </div>
     </div>
@@ -753,7 +827,9 @@ class PointGame {
     
     showScoreboard() { document.getElementById('scoreboard-screen').classList.add('active-screen'); }
     closeScoreboard() { document.getElementById('scoreboard-screen').classList.remove('active-screen'); }
-
+    // --- ADD THESE TWO NEW FUNCTIONS ---
+    showHowToPlay() { document.getElementById('how-to-play-screen').classList.add('active-screen'); }
+    closeHowToPlay() { document.getElementById('how-to-play-screen').classList.remove('active-screen'); }
     // --- CARD & DECK LOGIC (PRIVATE) ---
 
     _createDeck() {
