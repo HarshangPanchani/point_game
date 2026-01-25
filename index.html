@@ -116,22 +116,30 @@
             position: relative;
         }
         
-        #opponents {
+        /* NEW STYLES FOR ARC LAYOUT */
+        #opponents-container {
             position: absolute;
-            top: 10px;
-            width: 100%;
-            display: flex;
-            justify-content: space-between;
-            gap: 20px;
-            align-content: space-between;
-            align-items: center;
+            top: 50%;
+            left: 50%;
+            /* This is a trick to make a non-visual origin point for calculations */
+            width: 1px;
+            height: 1px;
+            z-index: 5;
         }
+        
         .opponent {
-            background: rgba(0,0,0,0.4);
-            padding: 5px 10px; border-radius: 10px;
-            text-align: center; font-size: 12px;
+            position: absolute; /* Changed from default */
+            transform-origin: center;
+            background: rgba(0,0,0,0.5);
+            padding: 5px 10px;
+            border-radius: 10px;
+            text-align: center;
+            font-size: 12px;
             border: 2px solid transparent;
-            min-width: 80px;
+            width: 90px;
+            /* Added smooth transitions for when players join/leave */
+            transition: border-color 0.3s, transform 0.5s ease-out;
+            will-change: transform; /* Performance optimization */
         }
         .opponent.active-turn { border: 2px solid var(--accent); }
         .opponent .card-icon { font-size: 18px; }
@@ -275,9 +283,10 @@
                 <span id="round-indicator">Round: 1</span>
                 <span id="turn-indicator">Waiting...</span>
             </div>
+            <div id="opponents-container"></div>
 
             <div id="table-area">
-                <div id="opponents"></div>
+                <!-- <div id="opponents"></div> -->
                 <div class="deck-placeholder" id="draw-pile" onclick="app.pickCard('draw')">
                     <div id="draw-pile-visual" class="card card-back" style="position: absolute;"></div>
                     <span>DRAW (<span id="draw-count">0</span>)</span>
@@ -861,18 +870,7 @@ class PointGame {
             document.getElementById('turn-indicator').innerText = isMyTurn ? `YOUR TURN (${turnPhase.toUpperCase()})` : `${currentPlayer.name}'s Turn`;
 
             // Opponents
-            const oppContainer = document.getElementById('opponents');
-            oppContainer.innerHTML = '';
-            playerIds.forEach(pid => {
-                if (pid !== this.myId && players[pid]) { // Added safety check
-                    const p = players[pid];
-                    let div = document.createElement('div');
-                    div.className = `opponent ${pid === currentPlayerId ? 'active-turn' : ''}`;
-                    div.dataset.pid = pid; 
-                    div.innerHTML = `<div>${p.name}</div><div class="card-icon">🂠 ${(p.hand || []).length}</div>`;
-                    oppContainer.appendChild(div);
-                }
-            });
+            this.renderOpponents(players, currentPlayerId);
 
             // Decks
             const drawPileEl = document.getElementById('draw-pile');
@@ -992,6 +990,44 @@ class PointGame {
         footerRow += '</tr>';
         tfoot.innerHTML = footerRow;
         table.appendChild(tfoot);
+    }
+    renderOpponents(players, currentPlayerId) {
+        const oppContainer = document.getElementById('opponents-container');
+        oppContainer.innerHTML = '';
+        const opponentIds = Object.keys(players).filter(pid => pid !== this.myId && players[pid]);
+
+        if (opponentIds.length === 0) return;
+
+        // Define the arc for opponents (top 180 degrees of an ellipse)
+        const angleSpan = 180; // The total spread in degrees
+        const angleOffset = -180; // Start from the left (-180 degrees)
+        
+        // Calculate the angle between each opponent
+        const angleStep = angleSpan / (opponentIds.length + 1);
+
+        // Define the shape of the table (an ellipse wider than it is tall)
+        const radiusX = window.innerWidth * 0.4;
+        const radiusY = window.innerHeight * 0.35;
+
+        opponentIds.forEach((pid, i) => {
+            const p = players[pid];
+            // Calculate the angle for this specific opponent
+            const angleDeg = angleOffset + (i + 1) * angleStep;
+            const angleRad = angleDeg * (Math.PI / 180);
+
+            // Calculate X and Y coordinates using trigonometry
+            const x = radiusX * Math.cos(angleRad);
+            const y = radiusY * Math.sin(angleRad);
+            
+            let div = document.createElement('div');
+            div.className = `opponent ${pid === currentPlayerId ? 'active-turn' : ''}`;
+            div.dataset.pid = pid; 
+            // Apply the calculated position. The first translate centers the element on the point.
+            div.style.transform = `translate(-50%, -50%) translate(${x}px, ${y}px)`;
+            div.innerHTML = `<div>${p.name}</div><div class="card-icon">🂠 ${(p.hand || []).length}</div>`;
+            
+            oppContainer.appendChild(div);
+        });
     }
 }
 
