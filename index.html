@@ -410,11 +410,17 @@ class PointGame {
             [`players/${this.myId}/online`]: true
         };
         
-        if (gameData.status !== 'lobby' && gameData.currentRound > 0) {
-            for (let i = 1; i <= gameData.currentRound; i++) {
-                updates[`scores/${i}/${this.myId}`] = gameData.scores?.[i]?.[this.myId] === undefined ? gameData.settings.latePenalty : gameData.scores[i][this.myId];
+        if (gameData.status !== 'lobby') {
+            // --- THIS IS THE CRITICAL ADDITION ---
+            // Mark the player as inactive for the current round.
+            updates[`players/${this.myId}/activeInRound`] = false;
+
+            const roundsToPenalize = gameData.currentRound > 0 ? gameData.currentRound : 0;
+            for (let i = 1; i <= roundsToPenalize; i++) {
+                updates[`scores/${i}/${this.myId}`] = gameData.settings.latePenalty;
             }
         }
+
         
         await update(this.gameRef, updates);
         this.listenForGameUpdates();
@@ -519,7 +525,8 @@ class PointGame {
         if (!this.isHost) return;
 
         const playersSnapshot = await get(ref(db, `games/${this.gameCode}/players`));
-        const playerIds = Object.keys(playersSnapshot.val() || {});
+        const currentPlayers = playersSnapshot.val() || {};
+        const playerIds = Object.keys(currentPlayers);
         
         let deck = this._createDeck();
         deck = this._shuffle(deck);
@@ -533,10 +540,30 @@ class PointGame {
 
         playerIds.forEach(pid => {
             updates[`players/${pid}/hand`] = deck.splice(0, 7);
+            updates[`players/${pid}/activeInRound`] = true;
         });
 
         updates.tray = [deck.pop()];
         updates.drawPile = deck;
+
+        // --- START OF THE FIX ---
+        // Find the first active player to start the round.
+        let currentIndex = updates.turnIndex;
+        let failsafe = 0; // Prevent theoretical infinite loops on strange data
+        
+        // We check against the list of players we know are in the game.
+        // Since we just set `activeInRound` to true for everyone in the `updates` object,
+        // this loop will now correctly find a starting player and exit.
+        while (
+            !currentPlayers[playerIds[currentIndex]] || 
+            (updates[`players/${playerIds[currentIndex]}/activeInRound`] === false) &&
+            failsafe < playerIds.length
+        ) {
+            currentIndex = (currentIndex + 1) % playerIds.length;
+            failsafe++;
+        }
+        updates.turnIndex = currentIndex;
+        // --- END OF THE FIX ---
 
         await update(this.gameRef, updates);
     }
@@ -571,32 +598,45 @@ class PointGame {
         let drawPile = gameData.drawPile || [];
         let tray = gameData.tray || [];
 
+        // Check if there are any pickable cards at all
+        const isDrawPileEmpty = drawPile.length === 0;
+        const eligibleIndex = gameData.eligibleTrayCardIndex;
+        const isTrayPickable = eligibleIndex > -1 && tray[eligibleIndex];
+        const canReshuffle = tray.length > 1;
+
+        if (isDrawPileEmpty && !isTrayPickable && !canReshuffle) {
+            // --- THIS FIXES THE "STUCK TURN" BUG ---
+            this.showToast("No cards to pick! Turn skipped.");
+            // Force the turn to the next player without picking a card.
+            let nextIndex = gameData.turnIndex;
+            let currentTurn = nextIndex;
+            do {
+                nextIndex = (nextIndex + 1) % playerIds.length;
+            } while (gameData.players[playerIds[nextIndex]] && !gameData.players[playerIds[nextIndex]].activeInRound && nextIndex !== currentTurn);
+            
+            updates.turnIndex = nextIndex;
+            updates.turnPhase = 'discard';
+            updates.eligibleTrayCardIndex = null;
+            await update(this.gameRef, updates);
+            return;
+        }
+
         if (source === 'draw') {
             if (drawPile.length === 0) {
-                const eligibleIndex = gameData.eligibleTrayCardIndex;
-                let cardsToShuffle = [];
+                // Reshuffle logic is now safe because we know we can.
                 let keptCard = null;
-
-                if (eligibleIndex > -1 && tray[eligibleIndex]) {
+                if (isTrayPickable) {
                     keptCard = tray[eligibleIndex];
                     cardsToShuffle = tray.filter((_, index) => index !== eligibleIndex);
                 } else {
                     cardsToShuffle = tray;
                 }
-                
-                if (cardsToShuffle.length === 0) return this.showToast("No cards left to draw!");
-
                 drawPile = this._shuffle(cardsToShuffle);
                 tray = keptCard ? [keptCard] : [];
             }
             pickedCard = drawPile.pop();
-
         } else { // 'tray'
-            const eligibleIndex = gameData.eligibleTrayCardIndex;
-            if (eligibleIndex === undefined || eligibleIndex < 0 || !tray[eligibleIndex]) {
-                return; 
-            }
-            
+            if (!isTrayPickable) return; 
             pickedCard = tray[eligibleIndex];
             tray.splice(eligibleIndex, 1);
         }
@@ -604,7 +644,15 @@ class PointGame {
         updates.drawPile = drawPile;
         updates.tray = tray;
         updates[`players/${this.myId}/hand`] = [...(gameData.players[this.myId].hand || []), pickedCard];
-        updates.turnIndex = (gameData.turnIndex + 1) % playerIds.length;
+        
+        // --- NEW TURN ADVANCEMENT LOGIC TO SKIP INACTIVE PLAYERS ---
+        let nextIndex = gameData.turnIndex;
+        let currentTurn = nextIndex; // Failsafe for infinite loop
+        do {
+            nextIndex = (nextIndex + 1) % playerIds.length;
+        } while (gameData.players[playerIds[nextIndex]] && !gameData.players[playerIds[nextIndex]].activeInRound && nextIndex !== currentTurn);
+        
+        updates.turnIndex = nextIndex;
         updates.turnPhase = 'discard';
         updates.eligibleTrayCardIndex = null;
 
@@ -644,8 +692,17 @@ class PointGame {
         const showerSum = this._calculateHandSum(shower.hand);
         let playerSums = {};
         playerIds.forEach(pid => {
-            if (gameData.players[pid]) {
-                playerSums[pid] = this._calculateHandSum(gameData.players[pid].hand);
+            const player = gameData.players[pid];
+            if (player) {
+                // --- THIS IS THE FINAL, CRITICAL FIX ---
+                // If a player is not active in this round (i.e., they joined late),
+                // their sum for this calculation is considered the penalty score.
+                if (player.activeInRound === false) {
+                    playerSums[pid] = gameData.settings.latePenalty;
+                } else {
+                    // Otherwise, calculate their sum normally.
+                    playerSums[pid] = this._calculateHandSum(player.hand);
+                }
             }
         });
         const playersWhoBeatOrTied = Object.keys(playerSums).filter(pid => playerSums[pid] <= showerSum);
@@ -931,9 +988,16 @@ class PointGame {
                 if (turnPhase === 'discard') {
                     btnShow.disabled = currentSum > 5;
                     if (this.selectedCardIndices.length > 0) {
-                        const selectedCards = this.selectedCardIndices.map(i => myHand[i]);
-                        const allSame = selectedCards.every(c => c.v === selectedCards[0].v);
-                        btnDiscard.disabled = !allSame || selectedCards.length === 0;
+                        // --- THIS IS THE FIX FOR THE DISCARD BUTTON ---
+                        if (this.selectedCardIndices.length === 1) {
+                            // If only one card is selected, the button is always enabled.
+                            btnDiscard.disabled = false;
+                        } else {
+                            // If multiple cards are selected, check if they are the same value.
+                            const selectedCards = this.selectedCardIndices.map(i => myHand[i]);
+                            const allSame = selectedCards.every(c => c.v === selectedCards[0].v);
+                            btnDiscard.disabled = !allSame;
+                        }
                     }
                 } else { // pick phase
                     drawPileEl.classList.add('actionable');
@@ -942,6 +1006,7 @@ class PointGame {
                     }
                 }
             }
+
             
             if (status === 'round_over') {
                 this.renderScoreboard(gameData);
