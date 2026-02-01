@@ -670,8 +670,7 @@
                 <p>When a player "Shows," the round ends and points are calculated:</p>
                 <ul>
                     <li><strong>Clean Win:</strong> If the player who Showed has the *strictly lowest* score, they get
-                        <strong>0 points</strong>. Everyone else gets points equal to their hand's sum.
-                    </li>
+                        <strong>0 points</strong>. Everyone else gets points equal to their hand's sum.</li>
                     <li><strong>Wrong Show / Tie:</strong> If another player has a score equal to or lower than the
                         person who Showed:
                         <ul>
@@ -770,21 +769,8 @@
                 if (!this.myName) return this.showToast("Please enter your name.");
 
                 this.isHost = true;
-
-                // --- FIX FOR BUG #10: Validate lobby code doesn't exist ---
-                let attempts = 0;
-                let codeExists = true;
-                while (codeExists && attempts < 5) {
-                    this.gameCode = Math.random().toString(36).substring(2, 8).toUpperCase();
-                    this.gameRef = ref(db, 'games/' + this.gameCode);
-                    const snapshot = await get(this.gameRef);
-                    codeExists = snapshot.exists();
-                    attempts++;
-                }
-
-                if (codeExists) {
-                    return this.showToast("Failed to create unique lobby. Please try again.");
-                }
+                this.gameCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+                this.gameRef = ref(db, 'games/' + this.gameCode);
 
                 const initialGameState = {
                     hostId: this.myId,
@@ -803,47 +789,37 @@
                 const code = document.getElementById('room-code-input').value.trim().toUpperCase();
                 if (!this.myName || !code) return this.showToast("Enter name and code.");
 
-                try {
-                    this.gameCode = code;
-                    this.gameRef = ref(db, 'games/' + this.gameCode);
+                this.gameCode = code;
+                this.gameRef = ref(db, 'games/' + this.gameCode);
 
-                    const snapshot = await get(this.gameRef);
-                    if (!snapshot.exists()) return this.showToast("Game code not found.");
+                const snapshot = await get(this.gameRef);
+                if (!snapshot.exists()) return this.showToast("Game code not found.");
 
-                    const gameData = snapshot.val();
-                    const updates = {
-                        [`players/${this.myId}/name`]: this.myName,
-                        [`players/${this.myId}/online`]: true
-                    };
+                const gameData = snapshot.val();
+                const updates = {
+                    [`players/${this.myId}/name`]: this.myName,
+                    [`players/${this.myId}/online`]: true
+                };
 
-                    if (gameData.status !== 'lobby') {
-                        // --- THIS IS THE CRITICAL ADDITION ---
-                        // Mark the player as inactive for the current round.
-                        updates[`players/${this.myId}/activeInRound`] = false;
+                if (gameData.status !== 'lobby') {
+                    // --- THIS IS THE CRITICAL ADDITION ---
+                    // Mark the player as inactive for the current round.
+                    updates[`players/${this.myId}/activeInRound`] = false;
 
-                        const roundsToPenalize = gameData.currentRound > 0 ? gameData.currentRound : 0;
-                        for (let i = 1; i <= roundsToPenalize; i++) {
-                            updates[`scores/${i}/${this.myId}`] = gameData.settings.latePenalty;
-                        }
+                    const roundsToPenalize = gameData.currentRound > 0 ? gameData.currentRound : 0;
+                    for (let i = 1; i <= roundsToPenalize; i++) {
+                        updates[`scores/${i}/${this.myId}`] = gameData.settings.latePenalty;
                     }
-
-                    await update(this.gameRef, updates);
-                    this.listenForGameUpdates();
-                } catch (error) {
-                    console.error('Join lobby error:', error);
-                    this.showToast("Network error. Please check your connection.");
                 }
+
+
+                await update(this.gameRef, updates);
+                this.listenForGameUpdates();
             }
 
             listenForGameUpdates() {
                 const playerStatusRef = ref(db, `games/${this.gameCode}/players/${this.myId}/online`);
                 onDisconnect(playerStatusRef).set(false);
-
-                // --- AUTO-SPECTATOR ON DISCONNECT ---
-                // When player disconnects, automatically make them a spectator
-                const playerActiveRef = ref(db, `games/${this.gameCode}/players/${this.myId}/activeInRound`);
-                onDisconnect(playerActiveRef).set(false);
-                // --- END AUTO-SPECTATOR ---
 
                 // --- START: HOST MIGRATION LOGIC ---
                 if (this.isHost) {
@@ -906,21 +882,6 @@
                         [`players/${oldHostId}/activeInRound`]: false // Set the old host to be a spectator
                     };
 
-                    // --- FIX FOR BUG #2: Host migration now advances turn if host was current player ---
-                    if (gameData.status === 'playing' && gameData.players[oldHostId] && Object.keys(gameData.players)[gameData.turnIndex] === oldHostId) {
-                        const playerIds = Object.keys(gameData.players);
-                        let nextIndex = gameData.turnIndex;
-                        let failsafe = 0;
-                        do {
-                            nextIndex = (nextIndex + 1) % playerIds.length;
-                            failsafe++;
-                        } while (
-                            (gameData.players[playerIds[nextIndex]] && gameData.players[playerIds[nextIndex]].activeInRound === false && playerIds[nextIndex] !== oldHostId) &&
-                            failsafe < playerIds.length
-                        );
-                        updates.turnIndex = nextIndex;
-                    }
-
                     await update(this.gameRef, updates);
                 }
             }
@@ -932,54 +893,40 @@
                 const player = currentState.players[playerId];
                 if (!player) return;
 
-                // --- PREVENT TOGGLING OFFLINE PLAYERS ---
-                if (!player.online) {
-                    this.showToast(`${player.name} is offline. They must reconnect first.`);
-                    return;
-                }
-                // --- END CHECK ---
-
-                const isCurrentlyInactive = player.activeInRound === false;
-                const newState = !isCurrentlyInactive; // Toggle state
+                // Toggling logic remains the same
+                const newState = player.activeInRound === false;
 
                 const updates = {
                     [`players/${playerId}/activeInRound`]: newState
                 };
 
-                // --- FIX FOR BUG #1: MID-ROUND ACTIVATION ---
-                // If activating a player mid-game (not during lobby), they should not play this round
-                if (newState === true && currentState.status === 'playing' && currentState.currentRound > 0) {
-                    // Add penalty for current round since they're being activated mid-round
-                    updates[`scores/${currentState.currentRound}/${playerId}`] = currentState.settings.latePenalty;
-                    this.showToast(`${player.name} will be active next round (penalty added for this round).`);
-                } else if (newState === false) {
-                    // Making player inactive (spectator)
-                    const playerIds = Object.keys(currentState.players);
-                    const currentPlayerId = playerIds[currentState.turnIndex];
+                // --- FIX FOR BUG #3: MID-TURN SPECTATE ---
+                // If we are making the CURRENTLY active player a spectator, we must advance the turn.
+                const playerIds = Object.keys(currentState.players);
+                const currentPlayerId = playerIds[currentState.turnIndex];
 
-                    // If we are making the CURRENTLY active player a spectator, advance the turn
-                    if (currentPlayerId === playerId) {
-                        this.showToast(`${player.name}'s turn has been skipped.`);
+                if (newState === false && currentPlayerId === playerId) {
+                    this.showToast(`${player.name}'s turn has been skipped.`);
 
-                        let nextIndex = currentState.turnIndex;
-                        let failsafe = 0;
-                        do {
-                            nextIndex = (nextIndex + 1) % playerIds.length;
-                            failsafe++;
-                        } while (
-                            (currentState.players[playerIds[nextIndex]] && currentState.players[playerIds[nextIndex]].activeInRound === false && playerIds[nextIndex] !== playerId) &&
-                            failsafe < playerIds.length
-                        );
+                    // This is the same turn-skipping logic from pickCard(), ensuring consistency.
+                    let nextIndex = currentState.turnIndex;
+                    let failsafe = 0;
+                    do {
+                        nextIndex = (nextIndex + 1) % playerIds.length;
+                        failsafe++;
+                    } while (
+                        (currentState.players[playerIds[nextIndex]] && !currentState.players[playerIds[nextIndex]].activeInRound && playerIds[nextIndex] !== playerId) &&
+                        failsafe < playerIds.length
+                    );
 
-                        updates.turnIndex = nextIndex;
-                    } else {
-                        this.showToast(`${player.name} is now a Spectator.`);
-                    }
-                } else {
-                    this.showToast(`${player.name} is now Active (for next round).`);
+                    updates.turnIndex = nextIndex;
                 }
+                // --- END OF FIX #3 ---
 
                 await update(this.gameRef, updates);
+
+                const playerName = player.name;
+                this.showToast(`${playerName} is now ${newState ? 'Active (for next round)' : 'a Spectator'}.`);
             }
             handleStateUpdate(gameData) {
                 // --- THIS IS THE NEW, CORRECTED LOGIC ---
@@ -991,44 +938,6 @@
                     this._calculateAndSetScores(gameData);
                     return; // Stop processing this specific update immediately.
                 }
-
-                // --- FIX: AUTO-ADVANCE TURN IF CURRENT PLAYER IS OFFLINE/SPECTATOR ---
-                if (this.isHost && gameData.status === 'playing' && gameData.players) {
-                    const playerIds = Object.keys(gameData.players);
-                    const currentPlayerId = playerIds[gameData.turnIndex];
-                    const currentPlayer = gameData.players[currentPlayerId];
-
-                    // Check if current player is offline OR spectator
-                    if (currentPlayer && (!currentPlayer.online || currentPlayer.activeInRound === false)) {
-                        // Current player is offline or spectator - advance turn!
-                        let nextIndex = gameData.turnIndex;
-                        let failsafe = 0;
-                        const startIndex = nextIndex;
-
-                        do {
-                            nextIndex = (nextIndex + 1) % playerIds.length;
-                            failsafe++;
-
-                            const nextPlayer = gameData.players[playerIds[nextIndex]];
-                            // Found an active, online player
-                            if (nextPlayer && nextPlayer.online && nextPlayer.activeInRound !== false) {
-                                break;
-                            }
-                        } while (failsafe < playerIds.length && nextIndex !== startIndex);
-
-                        // Only update if we found a different active player
-                        if (nextIndex !== gameData.turnIndex) {
-                            const updates = {
-                                turnIndex: nextIndex,
-                                turnPhase: 'discard'
-                            };
-                            update(this.gameRef, updates);
-                            this.showToast(`Turn advanced (${currentPlayer.name} is ${!currentPlayer.online ? 'offline' : 'spectator'})`);
-                            return; // Don't render yet, wait for the update to come back
-                        }
-                    }
-                }
-                // --- END FIX ---
 
                 // 2. If no special action is needed, render the UI with the latest data.
                 this.render(gameData);
@@ -1065,14 +974,7 @@
 
             updateSettings() {
                 if (!this.isHost) return;
-                // --- FIX FOR BUG #15: Input validation for penalty ---
-                let penalty = parseInt(document.getElementById('late-penalty-input').value);
-                if (isNaN(penalty) || penalty < 0) {
-                    penalty = 10;
-                    document.getElementById('late-penalty-input').value = 10;
-                    this.showToast("Invalid penalty. Reset to 10.");
-                }
-                penalty = Math.max(0, Math.min(100, penalty)); // Cap between 0-100
+                const penalty = parseInt(document.getElementById('late-penalty-input').value) || 10;
                 update(this.gameRef, { 'settings/latePenalty': penalty });
             }
 
@@ -1123,21 +1025,6 @@
                 const playersSnapshot = await get(ref(db, `games/${this.gameCode}/players`));
                 const currentPlayers = playersSnapshot.val() || {};
                 const playerIds = Object.keys(currentPlayers);
-
-                // --- FIX FOR BUG #4: Check if at least one player is or can be active ---
-                const activePlayerCount = playerIds.filter(pid =>
-                    currentPlayers[pid] && currentPlayers[pid].activeInRound !== false
-                ).length;
-
-                if (activePlayerCount === 0 && roundNumber > 1) {
-                    // All players are spectators - force reactivate all players
-                    this.showToast("All players are spectators! Reactivating all for new round.");
-                    playerIds.forEach(pid => {
-                        if (currentPlayers[pid]) {
-                            currentPlayers[pid].activeInRound = true;
-                        }
-                    });
-                }
 
                 let deck = this._createDeck();
                 deck = this._shuffle(deck);
@@ -1223,7 +1110,7 @@
                     let currentTurn = nextIndex;
                     do {
                         nextIndex = (nextIndex + 1) % playerIds.length;
-                    } while (gameData.players[playerIds[nextIndex]] && gameData.players[playerIds[nextIndex]].activeInRound === false && nextIndex !== currentTurn);
+                    } while (gameData.players[playerIds[nextIndex]] && !gameData.players[playerIds[nextIndex]].activeInRound && nextIndex !== currentTurn);
 
                     updates.turnIndex = nextIndex;
                     updates.turnPhase = 'discard';
@@ -1236,7 +1123,6 @@
                     if (drawPile.length === 0) {
                         // Reshuffle logic is now safe because we know we can.
                         let keptCard = null;
-                        let cardsToShuffle; // --- FIX FOR BUG #7: Proper variable declaration ---
                         if (isTrayPickable) {
                             keptCard = tray[eligibleIndex];
                             cardsToShuffle = tray.filter((_, index) => index !== eligibleIndex);
@@ -1262,7 +1148,7 @@
                 let currentTurn = nextIndex; // Failsafe for infinite loop
                 do {
                     nextIndex = (nextIndex + 1) % playerIds.length;
-                } while (gameData.players[playerIds[nextIndex]] && gameData.players[playerIds[nextIndex]].activeInRound === false && nextIndex !== currentTurn);
+                } while (gameData.players[playerIds[nextIndex]] && !gameData.players[playerIds[nextIndex]].activeInRound && nextIndex !== currentTurn);
 
                 updates.turnIndex = nextIndex;
                 updates.turnPhase = 'discard';
@@ -1400,15 +1286,6 @@
                         const isInactive = p.activeInRound === false;
                         toggleBtn.innerText = isInactive ? 'Make Active' : 'Make Spectator';
                         toggleBtn.className = 'toggle-active-btn';
-
-                        // Disable button if player is offline
-                        if (!p.online) {
-                            toggleBtn.disabled = true;
-                            toggleBtn.style.opacity = '0.5';
-                            toggleBtn.style.cursor = 'not-allowed';
-                            toggleBtn.title = 'Player must be online to toggle';
-                        }
-
                         toggleBtn.onclick = () => this.togglePlayerActiveState(pid);
                         buttonsContainer.appendChild(toggleBtn);
 
@@ -1602,12 +1479,7 @@
                     // Decks
                     const drawPileEl = document.getElementById('draw-pile');
                     const discardPileEl = document.getElementById('discard-pile');
-                    const drawPileCount = (gameData.drawPile || []).length;
-                    document.getElementById('draw-count').innerText = drawPileCount;
-
-                    // --- FIX FOR BUG #11: Hide draw pile visual when empty ---
-                    const drawPileVisual = document.getElementById('draw-pile-visual');
-                    drawPileVisual.style.display = drawPileCount > 0 ? 'block' : 'none';
+                    document.getElementById('draw-count').innerText = (gameData.drawPile || []).length;
 
                     const tray = gameData.tray || [];
                     const isMyPickPhase = isMyTurn && turnPhase === 'pick';
@@ -1663,17 +1535,15 @@
                         if (turnPhase === 'discard') {
                             btnShow.disabled = currentSum > 5;
                             if (this.selectedCardIndices.length > 0) {
-                                // --- FIX FOR BUG #6: Null check for selected cards ---
+                                // --- THIS IS THE FIX FOR THE DISCARD BUTTON ---
                                 if (this.selectedCardIndices.length === 1) {
+                                    // If only one card is selected, the button is always enabled.
                                     btnDiscard.disabled = false;
                                 } else {
-                                    const selectedCards = this.selectedCardIndices.map(i => myHand[i]).filter(c => c); // Filter out undefined
-                                    if (selectedCards.length > 0) {
-                                        const allSame = selectedCards.every(c => c && c.v === selectedCards[0].v);
-                                        btnDiscard.disabled = !allSame;
-                                    } else {
-                                        btnDiscard.disabled = true;
-                                    }
+                                    // If multiple cards are selected, check if they are the same value.
+                                    const selectedCards = this.selectedCardIndices.map(i => myHand[i]);
+                                    const allSame = selectedCards.every(c => c.v === selectedCards[0].v);
+                                    btnDiscard.disabled = !allSame;
                                 }
                             }
                         } else { // pick phase
@@ -1697,14 +1567,13 @@
                 const table = document.getElementById('score-table');
                 table.innerHTML = '';
                 const players = gameData.players || {};
-                // --- FIX FOR BUG #3: Filter out kicked/null players ---
-                const playerIds = Object.keys(players).filter(pid => players[pid]);
+                const playerIds = Object.keys(players);
                 if (playerIds.length === 0) return;
 
                 // Header
                 const thead = document.createElement('thead');
                 let headerRow = '<tr><th>Round</th>';
-                playerIds.forEach(pid => { headerRow += `<th>${players[pid].name}</th>` });
+                playerIds.forEach(pid => { if (players[pid]) headerRow += `<th>${players[pid].name}</th>` });
                 headerRow += '</tr>';
                 thead.innerHTML = headerRow;
                 table.appendChild(thead);
@@ -1715,9 +1584,11 @@
                 for (let r = 1; r <= gameData.currentRound; r++) {
                     let row = `<tr><td>${r}</td>`;
                     playerIds.forEach(pid => {
-                        const score = gameData.scores?.[r]?.[pid] ?? 0;
-                        row += `<td>${score}</td>`;
-                        totals[pid] += score;
+                        if (players[pid]) {
+                            const score = gameData.scores?.[r]?.[pid] ?? 0;
+                            row += `<td>${score}</td>`;
+                            totals[pid] += score;
+                        }
                     });
                     row += '</tr>';
                     tbody.innerHTML += row;
@@ -1727,7 +1598,7 @@
                 // Footer
                 const tfoot = document.createElement('tfoot');
                 let footerRow = '<tr><td>TOTAL</td>';
-                playerIds.forEach(pid => { footerRow += `<td>${totals[pid]}</td>` });
+                playerIds.forEach(pid => { if (players[pid]) footerRow += `<td>${totals[pid]}</td>` });
                 footerRow += '</tr>';
                 tfoot.innerHTML = footerRow;
                 table.appendChild(tfoot);

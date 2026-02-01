@@ -1,0 +1,1269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>POINT - The Greatest Card Game</title>
+    <!-- Firebase SDK -->
+    <script type="module">
+      import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+      import { getDatabase, ref, set, onValue, get, update, onDisconnect, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+      window.firebaseSDK = { initializeApp, getDatabase, ref, set, onValue, get, update, onDisconnect, serverTimestamp };
+    </script>
+    <style>
+        :root {
+            --bg-color: #013220; /* Darker Felt Green */
+            --table-color: #014222;
+            --card-width: 70px;
+            --card-height: 98px;
+            --text-light: #f0f0f0;
+            --accent: #FFD700; /* Gold */
+            --danger: #d90429;
+            --primary: #2a9d8f;
+        }
+
+        * { box-sizing: border-box; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+        body {
+            margin: 0; padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-light);
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+        }
+
+        /* Landscape Warning */
+        #portrait-warning {
+            display: none;
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: #1a1a1a;
+            z-index: 9999;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 20px;
+        }
+        @media (orientation: portrait) {
+            #portrait-warning { display: flex; }
+        }
+
+        /* Screens */
+        .screen {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            width: 100%; height: 100%;
+            position: absolute; top: 0; left: 0;
+            padding: 10px;
+            overflow-y:auto;
+            transition: opacity 0.3s;
+        }
+        .active-screen { display: flex; }
+
+        /* UI Elements */
+        input, button {
+            padding: 12px 18px;
+            margin: 8px;
+            border-radius: 8px;
+            border: none;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        button { cursor: pointer; background: var(--primary); color: #fff; transition: background-color 0.2s, transform 0.1s; box-shadow: 0 4px 6px rgba(0,0,0,0.2); }
+        button:hover { filter: brightness(1.1); }
+        button:active { transform: scale(0.97); box-shadow: 0 2px 3px rgba(0,0,0,0.2); }
+        button:disabled { background: #999; cursor: not-allowed; color: #ccc; box-shadow: none; }
+        button.danger { background: var(--danger); }
+        button.accent { background: var(--accent); color: #000; }
+        input { color: #000; text-align: center; width: 100%; }
+
+        /* Lobby */
+        .lobby-box { background: rgba(0,0,0,0.3); padding: 20px; border-radius: 12px; width: clamp(300px, 90vw, 500px); }
+        #lobby-list {
+            list-style: none; padding: 0; width: 100%;
+            background: rgba(0,0,0,0.3); border-radius: 10px; margin-top: 15px;
+        }
+        #lobby-list li {
+            padding: 12px; border-bottom: 1px solid rgba(255,255,255,0.1);
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        #lobby-code-display { font-family: monospace; background: #fff; color: #000; padding: 5px 10px; border-radius: 5px; cursor: pointer; user-select: text; }
+
+        /* Game Layout */
+        #game-screen { background: radial-gradient(circle, var(--table-color), var(--bg-color)); }
+        #game-ui {
+            width: 100%; height: 100%;
+            display: grid;
+            grid-template-rows: 40px 1fr 140px;
+        }
+
+        /* Top Bar */
+        #top-bar {
+            background: rgba(0,0,0,0.5);
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 0 20px; font-size: 14px;
+        }
+        #turn-indicator { font-weight: bold; color: var(--accent); }
+
+        /* Center Table */
+        #table-area {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+        }
+        
+        /* NEW STYLES FOR ARC LAYOUT */
+        #opponents-container {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            /* This is a trick to make a non-visual origin point for calculations */
+            width: 1px;
+            height: 1px;
+            
+        }
+        
+        .opponent {
+            position: absolute; /* Changed from default */
+            transform-origin: center;
+            background: rgba(0,0,0,0.5);
+            padding: 5px 10px;
+            border-radius: 10px;
+            text-align: center;
+            font-size: 12px;
+            border: 2px solid transparent;
+            width: 90px;
+            /* Added smooth transitions for when players join/leave */
+            transition: border-color 0.3s, transform 0.5s ease-out;
+            will-change: transform; /* Performance optimization */
+        }
+        .opponent.active-turn { border: 2px solid var(--accent); }
+        .opponent .card-icon { font-size: 18px; }
+
+        .deck-placeholder {
+            width: calc(var(--card-width) + 10px); height: calc(var(--card-height) + 10px);
+            border: 2px dashed rgba(255,255,255,0.5);
+            border-radius: 8px; margin: 0 20px;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            position: relative;
+            background: rgba(0,0,0,0.2);
+            cursor: pointer;
+            transition: border-color 0.2s, transform 0.2s;
+        }
+        .deck-placeholder.actionable { border-style: solid; border-color: var(--accent); }
+        .deck-placeholder.actionable:hover { transform: scale(1.05); }
+        .deck-placeholder span { font-size: 12px; text-align: center; color: rgba(255,255,255,0.8); }
+
+        /* Player Hand */
+        #player-area {
+            background: linear-gradient(transparent, rgba(0,0,0,0.8));
+            display: flex; flex-direction: column;
+            align-items: center;
+            padding-bottom: 5px;
+        }
+        #hand-container {
+            display: flex;
+            justify-content: center;
+            margin-top: -35px;
+            height: 110px;
+            width: 100%;
+            padding: 0 10px;
+            overflow-x: auto;
+        }
+        #controls { display: flex; gap: 10px; margin-top: 5px; align-items: center; }
+
+        /* Card Visuals */
+        .card {
+            width: var(--card-width); height: var(--card-height);
+            background: #fff; color: #000;
+            border-radius: 6px;
+            display: flex; flex-direction: column;
+            justify-content: space-between;
+            padding: 4px 5px;
+            box-shadow: 2px 2px 5px rgba(0,0,0,0.4);
+            font-weight: bold; font-family: 'Arial', sans-serif;
+            cursor: pointer;
+            position: relative;
+            margin: 0 -15px;
+            transition: transform 0.2s, border 0.2s;
+            border: 2px solid #333;
+        }
+        #hand-container .card:hover { transform: translateY(-15px); }
+        .card.selected { transform: translateY(-25px); border: 2px solid var(--accent); }
+        .card.red { color: var(--danger); }
+        .card.black { color: black; }
+        .card-center { font-size: 32px; align-self: center; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); }
+        .card-corner { font-size: 16px; line-height: 1; }
+        .card-corner.bottom { transform: rotate(180deg); align-self: flex-end; }
+        .card.joker .card-center { font-size: 18px; font-weight: bold; letter-spacing: -1px; }
+        
+        .card-back {
+            background: linear-gradient(135deg, #4682b4, #5a9bd5);
+            border: 5px solid white;
+        }
+        .card-back::after { content: "🃏"; font-size: 40px; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); }
+
+        /* Scoreboard Table */
+        #scoreboard-screen { background: rgba(0,0,0,0.85); backdrop-filter: blur(5px); }
+        #scoreboard-container { background: var(--bg-color); border: 2px solid var(--accent); border-radius: 12px; padding: 20px; width: 95vw; max-width: 800px; max-height: 90vh; overflow: auto; }
+        #player-list-screen { background: rgba(0,0,0,0.85); backdrop-filter: blur(5px); }
+        #game-player-list {
+            list-style: none; padding: 0; width: 100%;
+            background: rgba(0,0,0,0.3); border-radius: 10px; margin-top: 15px;
+        }
+        #game-player-list li {
+            padding: 12px; border-bottom: 1px solid rgba(255,255,255,0.1);
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .kick-btn {
+            background: var(--danger);
+            font-size: 12px;
+            padding: 6px 12px;
+            margin: 0;
+            box-shadow: none;
+        }
+        #how-to-play-screen { background: rgba(0,0,0,0.85); backdrop-filter: blur(5px); }
+        #how-to-play-container { background: var(--bg-color); border: 2px solid var(--accent); border-radius: 12px; padding: 20px; width: 95vw; max-width: 800px; max-height: 90vh; display: flex; flex-direction: column; }
+        #rules-content { overflow-y: auto; padding-right: 15px; }
+        #rules-content h3 { color: var(--accent); border-bottom: 1px solid var(--accent); padding-bottom: 5px; margin-top: 20px; }
+        #rules-content p, #rules-content li { line-height: 1.6; }
+        #rules-content strong { color: #fefefe; }
+        table { width: 100%; border-collapse: collapse; background: white; color: black; font-size: 14px; }
+        th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+        th { background: #eee; }
+        tfoot { font-weight: bold; font-size: 16px; }
+        tfoot td { background: var(--accent); color: #000; }
+        
+        /* Notification */
+        #toast {
+            position: fixed; bottom: 150px; left: 50%; transform: translateX(-50%);
+            background: rgba(0,0,0,0.9); color: white; padding: 12px 24px;
+            border-radius: 25px; opacity: 0; pointer-events: none; transition: opacity 0.3s;
+            z-index: 10000;
+        }
+        #animation-layer { 
+            position: fixed; 
+            top: 0; 
+            left: 0; 
+            width: 100%; 
+            height: 100%; 
+            z-index: 100; 
+            pointer-events: none; 
+            overflow: hidden;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="portrait-warning">
+        <h1>Please Rotate Your Device</h1>
+        <p>This game is best played in Landscape mode.</p>
+    </div>
+   
+    <!-- 1. Start Screen -->
+    <div id="start-screen" class="screen active-screen">
+        <div class="lobby-box">
+            <h1>POINT</h1>
+            <input type="text" id="username" placeholder="Enter Your Name" maxlength="12">
+            <div>
+                <button onclick="app.createLobby()" class="accent">Create Lobby</button>
+                <button onclick="app.showJoinInput()">Join Lobby</button>
+            </div>
+            <div id="join-container" style="display:none; margin-top:10px;">
+                <input type="text" id="room-code-input" placeholder="Enter Lobby Code" style="text-transform:uppercase;">
+                <button onclick="app.joinLobby()">Connect</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. Lobby Screen -->
+    <div id="lobby-screen" class="screen">
+        <div class="lobby-box">
+            <h2>Lobby Code: <span id="lobby-code-display" onclick="app.copyLobbyLink()">CODE</span></h2>
+            <div id="host-settings" style="display:none; margin-bottom: 10px; text-align:center;">
+                <label>Late Joiner Penalty Score: </label>
+                <input type="number" id="late-penalty-input" value="10" style="width:80px; padding:8px;" onchange="app.updateSettings()">
+            </div>
+            <p>Players:</p>
+            <ul id="lobby-list"></ul>
+            <div id="lobby-controls" style="text-align:center;">
+                <button id="start-game-btn" style="display:none" onclick="app.startGame()" class="accent">Start Game</button>
+            </div>
+            <p id="waiting-text" style="text-align:center; font-style:italic;">Waiting for host to start...</p>
+        </div>
+    </div>
+
+    <!-- 3. Game Screen -->
+    <div id="game-screen" class="screen">
+        <div id="game-ui">
+            <div id="top-bar">
+                <span>Room: <span id="game-room-id"></span></span>
+                <span id="round-indicator">Round: 1</span>
+                <span id="turn-indicator">Waiting...</span>
+            </div>
+            <div id="opponents-container"></div>
+
+            <div id="table-area">
+                <!-- <div id="opponents"></div> -->
+                <div class="deck-placeholder" id="draw-pile" onclick="app.pickCard('draw')">
+                    <div id="draw-pile-visual" class="card card-back" style="position: absolute;"></div>
+                    <span>DRAW (<span id="draw-count">0</span>)</span>
+                </div>
+                <div class="deck-placeholder" id="discard-pile" onclick="app.pickCard('tray')">
+                    <div id="discard-pile-visual"><span>TRAY<br>(Empty)</span></div>
+                </div>
+            </div>
+
+            <div id="player-area">
+                <div id="hand-sum-display" style="font-size:12px; margin-bottom:5px; color:#ddd;">Sum: 0</div>
+                <div id="hand-container"></div>
+                <div id="controls">
+                    <button id="btn-show" onclick="app.actionShow()" class="danger" disabled>SHOW</button>
+                    <button id="btn-discard" onclick="app.actionDiscard()" disabled>DISCARD</button>
+                    <button id="btn-scoreboard" onclick="app.showScoreboard()">SCORE</button>
+                    <button id="btn-players" onclick="app.showPlayerList()">PLAYERS</button>
+                    <button id="btn-how-to-play" onclick="app.showHowToPlay()">HOW TO PLAY</button>
+                    <button id="btn-fullscreen" onclick="app.toggleFullscreen()">FULLSCREEN</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 4. Scoreboard Screen -->
+    <div id="scoreboard-screen" class="screen">
+        <div id="scoreboard-container">
+            <h2 style="text-align:center;">Scoreboard</h2>
+            <p id="round-end-message" style="text-align:center; font-weight:bold;"></p>
+            <table id="score-table"></table>
+            <div style="margin-top:20px; text-align:center;">
+                <button onclick="app.closeScoreboard()" id="close-scoreboard-btn">Close</button>
+            </div>
+        </div>
+    </div>
+    <!-- 5. How to Play Screen -->
+    <div id="how-to-play-screen" class="screen">
+        <div id="how-to-play-container">
+            <h2 style="text-align:center;">How to Play POINT</h2>
+            
+            <div id="rules-content">
+                <h3>Objective</h3>
+                <p>The goal is to have the <strong>lowest possible sum</strong> of card values in your hand at the end of a round.</p>
+
+                <h3>Card Values</h3>
+                <ul>
+                    <li><strong>Joker:</strong> 0 points</li>
+                    <li><strong>Ace (A):</strong> 1 point</li>
+                    <li><strong>Cards 2-10:</strong> Face value (e.g., a '7' is 7 points)</li>
+                    <li><strong>Jack (J):</strong> 11 points</li>
+                    <li><strong>Queen (Q):</strong> 12 points</li>
+                    <li><strong>King (K):</strong> 13 points</li>
+                </ul>
+
+                <h3>The Turn</h3>
+                <p>Each turn has two steps, in this specific order:</p>
+                <ol>
+                    <li><strong>DISCARD:</strong> Place one or more cards from your hand into the Tray.
+                        <ul>
+                            <li>You may discard a single card of any value.</li>
+                            <li>To discard multiple cards, they <strong>must all have the same value</strong> (e.g., three 8s, two Kings).</li>
+                        </ul>
+                    </li>
+                    <li><strong>PICK:</strong> After discarding, you <strong>must</strong> pick exactly one new card from one of two places:
+                        <ul>
+                            <li>The face-down <strong>Draw Pile</strong>.</li>
+                            <li>The card on top of the <strong>Tray</strong> that the *previous player* discarded.</li>
+                        </ul>
+                    </li>
+                </ol>
+
+                <h3>Declaring a "Show"</h3>
+                <ul>
+                    <li>You can only declare a "Show" at the <strong>very start of your turn</strong>, before you discard.</li>
+                    <li>You can only do this if the total sum of your cards is <strong>5 or less</strong>.</li>
+                </ul>
+
+                <h3>Scoring</h3>
+                <p>When a player "Shows," the round ends and points are calculated:</p>
+                <ul>
+                    <li><strong>Clean Win:</strong> If the player who Showed has the *strictly lowest* score, they get <strong>0 points</strong>. Everyone else gets points equal to their hand's sum.</li>
+                    <li><strong>Wrong Show / Tie:</strong> If another player has a score equal to or lower than the person who Showed:
+                        <ul>
+                            <li>The <strong>Winners</strong> (all players with the lowest score) get <strong>0 points</strong>.</li>
+                            <li>The person who <strong>Showed</strong> gets a penalty: <strong>30 points × (number of players who beat or tied them)</strong>.</li>
+                            <li>All <strong>other</strong> players get points equal to their hand's sum.</li>
+                        </ul>
+                    </li>
+                </ul>
+
+                <h3>Special Rules</h3>
+                <ul>
+                    <li><strong>Late Joiners:</strong> If you join a game in progress, your turn will be skipped until the next round begins. You will receive a penalty score for any rounds you missed.</li>
+                    <li><strong>Empty Deck:</strong> If the Draw Pile runs out, the Tray is automatically shuffled (except for the last-played card) to create a new Draw Pile.</li>
+                </ul>
+            </div>
+
+            <div style="margin-top:20px; text-align:center;">
+                <button onclick="app.closeHowToPlay()" id="close-how-to-play-btn">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 6. Player List Screen -->
+    <div id="player-list-screen" class="screen">
+        <div class="lobby-box">
+            <h2 style="text-align:center;">Player List</h2>
+            <ul id="game-player-list">
+                <!-- Player list will be rendered here by JavaScript -->
+            </ul>
+            <div style="margin-top:20px; text-align:center;">
+                <button onclick="app.closePlayerList()" id="close-player-list-btn">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast">Message</div>
+    <div id="animation-layer"></div>
+
+<script type="module">
+const { initializeApp, getDatabase, ref, set, onValue, get, update, onDisconnect } = window.firebaseSDK;
+
+const firebaseConfig = {
+    apiKey: "AIzaSyAZ7-gmZfu6nfRvY-4hqdqQ86lGE405RQU",
+    authDomain: "pointgame-281d5.firebaseapp.com",
+    databaseURL: "https://pointgame-281d5-default-rtdb.asia-southeast1.firebasedatabase.app/",
+    projectId: "pointgame-281d5",
+    storageBucket: "pointgame-281d5.appspot.com",
+    messagingSenderId: "1006005693168",
+    appId: "1:1006005693168:web:e26847ed3f4371146bf035"
+};
+
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getDatabase(firebaseApp);
+
+class PointGame {
+    constructor() {
+        this.myId = localStorage.getItem('pointGamePlayerId') || 'player_' + Date.now() + Math.random().toString(36).substr(2, 5);
+        localStorage.setItem('pointGamePlayerId', this.myId);
+        this.myName = '';
+        this.isHost = false;
+        this.gameCode = null;
+        this.gameRef = null;
+        this.selectedCardIndices = [];
+        this.lastGameState = {}; // For detecting changes to animate
+    }
+
+    // --- LOBBY & CONNECTION ---
+
+    showScreen(id) {
+        document.querySelectorAll('.screen').forEach(s => s.classList.remove('active-screen'));
+        document.getElementById(id).classList.add('active-screen');
+    }
+
+    showToast(msg) {
+        const t = document.getElementById('toast');
+        t.innerText = msg;
+        t.style.opacity = 1;
+        setTimeout(() => t.style.opacity = 0, 2500);
+    }
+
+    showJoinInput() { document.getElementById('join-container').style.display = 'block'; }
+    
+    copyLobbyLink() {
+        const url = window.location.href.split('?')[0] + '?gameCode=' + this.gameCode;
+        navigator.clipboard.writeText(url).then(() => this.showToast('Game link copied!'));
+    }
+
+    async createLobby() {
+        this.myName = document.getElementById('username').value.trim();
+        if (!this.myName) return this.showToast("Please enter your name.");
+        
+        this.isHost = true;
+        this.gameCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+        this.gameRef = ref(db, 'games/' + this.gameCode);
+
+        const initialGameState = {
+            hostId: this.myId,
+            status: 'lobby',
+            settings: { latePenalty: 10 },
+            players: { [this.myId]: { name: this.myName, online: true } },
+            currentRound: 0,
+        };
+
+        await set(this.gameRef, initialGameState);
+        this.listenForGameUpdates();
+    }
+
+    async joinLobby() {
+        this.myName = document.getElementById('username').value.trim();
+        const code = document.getElementById('room-code-input').value.trim().toUpperCase();
+        if (!this.myName || !code) return this.showToast("Enter name and code.");
+
+        this.gameCode = code;
+        this.gameRef = ref(db, 'games/' + this.gameCode);
+
+        const snapshot = await get(this.gameRef);
+        if (!snapshot.exists()) return this.showToast("Game code not found.");
+
+        const gameData = snapshot.val();
+        const updates = {
+            [`players/${this.myId}/name`]: this.myName,
+            [`players/${this.myId}/online`]: true
+        };
+        
+        if (gameData.status !== 'lobby') {
+            // --- THIS IS THE CRITICAL ADDITION ---
+            // Mark the player as inactive for the current round.
+            updates[`players/${this.myId}/activeInRound`] = false;
+
+            const roundsToPenalize = gameData.currentRound > 0 ? gameData.currentRound : 0;
+            for (let i = 1; i <= roundsToPenalize; i++) {
+                updates[`scores/${i}/${this.myId}`] = gameData.settings.latePenalty;
+            }
+        }
+
+        
+        await update(this.gameRef, updates);
+        this.listenForGameUpdates();
+    }
+    
+    listenForGameUpdates() {
+        const playerStatusRef = ref(db, `games/${this.gameCode}/players/${this.myId}/online`);
+        onDisconnect(playerStatusRef).set(false);
+
+        onValue(this.gameRef, (snapshot) => {
+            if (!snapshot.exists()) {
+                alert("The game has ended or the host has left.");
+                location.reload();
+                return;
+            }
+            const gameData = snapshot.val();
+            
+            if (gameData.players && !gameData.players[this.myId]) {
+                alert("You have been removed from the game.");
+                location.reload();
+                return;
+            }
+
+            // --- CHANGE: Call the new handler instead of render directly ---
+            this.handleStateUpdate(gameData);
+        });
+    }
+    handleStateUpdate(gameData) {
+        // --- THIS IS THE NEW, CORRECTED LOGIC ---
+
+        // 1. First, check if the host needs to take a special action.
+        if (this.isHost && gameData.status === 'calculating_scores') {
+            // If the host sees this status, their ONLY job is to calculate scores.
+            // They should NOT try to render the game board in this state.
+            this._calculateAndSetScores(gameData);
+            return; // Stop processing this specific update immediately.
+        }
+
+        // 2. If no special action is needed, render the UI with the latest data.
+        this.render(gameData);
+
+        // 3. AFTER rendering, check if an animation needs to be triggered.
+        if (
+            this.lastGameState.status === 'playing' &&
+            gameData.status === 'playing' &&
+            gameData.turnIndex !== this.lastGameState.turnIndex
+        ) {
+            const lastPlayers = this.lastGameState.players;
+            if (lastPlayers) { // Safety check
+                const lastTurnPlayerId = Object.keys(lastPlayers)[this.lastGameState.turnIndex];
+                if (lastTurnPlayerId && lastTurnPlayerId !== this.myId && this.lastGameState.turnPhase === 'pick') {
+                    const newDrawCount = (gameData.drawPile || []).length;
+                    const oldDrawCount = (this.lastGameState.drawPile || []).length;
+                    const newTrayCount = (gameData.tray || []).length;
+                    const oldTrayCount = (this.lastGameState.tray || []).length;
+
+                    if (newDrawCount < oldDrawCount) {
+                        this.animateOpponentPick('draw', lastTurnPlayerId);
+                    } else if (newTrayCount < oldTrayCount) {
+                        this.animateOpponentPick('tray', lastTurnPlayerId);
+                    }
+                }
+            }
+        }
+        
+        // 4. FINALLY, update the game's "memory" for the next cycle.
+        this.lastGameState = JSON.parse(JSON.stringify(gameData));
+    }
+
+    // --- GAME ACTIONS (WRITING TO FIREBASE) ---
+    
+    updateSettings() {
+        if (!this.isHost) return;
+        const penalty = parseInt(document.getElementById('late-penalty-input').value) || 10;
+        update(this.gameRef, { 'settings/latePenalty': penalty });
+    }
+    
+    async kickPlayer(playerId) {
+        if (!this.isHost) return;
+        
+        const gameData = (await get(this.gameRef)).val();
+        if (!gameData.players[playerId]) return; // Player already gone
+
+        const updates = { [`players/${playerId}`]: null };
+
+        // Remove from scores
+        if (gameData.scores) {
+            Object.keys(gameData.scores).forEach(roundNum => {
+                updates[`scores/${roundNum}/${playerId}`] = null;
+            });
+        }
+
+        // --- CRITICAL ADDITION: Handle if the kicked player is the current turn ---
+        const playerIds = Object.keys(gameData.players);
+        const currentPlayerId = playerIds[gameData.turnIndex];
+
+        if (currentPlayerId === playerId) {
+            // Find the next active player to prevent the game from getting stuck
+            let nextIndex = gameData.turnIndex;
+            do {
+                nextIndex = (nextIndex + 1) % playerIds.length;
+            } while (playerIds[nextIndex] === playerId); // Loop until we find a player that isn't the one being kicked
+            
+            updates.turnIndex = nextIndex;
+        }
+
+        await update(this.gameRef, updates);
+        this.showToast(`${gameData.players[playerId].name} has been kicked.`);
+    }
+    
+    async startGame() {
+        if (!this.isHost) return;
+        const snapshot = await get(ref(db, `games/${this.gameCode}/players`));
+        if (Object.keys(snapshot.val() || {}).length < 2) return this.showToast("Need at least 2 players.");
+
+        await this.startNewRound(1);
+    }
+    
+    async startNewRound(roundNumber) {
+        if (!this.isHost) return;
+
+        const playersSnapshot = await get(ref(db, `games/${this.gameCode}/players`));
+        const currentPlayers = playersSnapshot.val() || {};
+        const playerIds = Object.keys(currentPlayers);
+        
+        let deck = this._createDeck();
+        deck = this._shuffle(deck);
+
+        const updates = {
+            status: 'playing',
+            currentRound: roundNumber,
+            turnIndex: (roundNumber - 1) % playerIds.length,
+            turnPhase: 'discard',
+        };
+
+        playerIds.forEach(pid => {
+            updates[`players/${pid}/hand`] = deck.splice(0, 7);
+            updates[`players/${pid}/activeInRound`] = true;
+        });
+
+        updates.tray = [deck.pop()];
+        updates.drawPile = deck;
+
+        // --- START OF THE FIX ---
+        // Find the first active player to start the round.
+        let currentIndex = updates.turnIndex;
+        let failsafe = 0; // Prevent theoretical infinite loops on strange data
+        
+        // We check against the list of players we know are in the game.
+        // Since we just set `activeInRound` to true for everyone in the `updates` object,
+        // this loop will now correctly find a starting player and exit.
+        while (
+            !currentPlayers[playerIds[currentIndex]] || 
+            (updates[`players/${playerIds[currentIndex]}/activeInRound`] === false) &&
+            failsafe < playerIds.length
+        ) {
+            currentIndex = (currentIndex + 1) % playerIds.length;
+            failsafe++;
+        }
+        updates.turnIndex = currentIndex;
+        // --- END OF THE FIX ---
+
+        await update(this.gameRef, updates);
+    }
+
+    async actionDiscard() {
+        const gameData = (await get(this.gameRef)).val();
+        const player = gameData.players[this.myId];
+        const cardsToDiscard = this.selectedCardIndices.map(i => player.hand[i]);
+        const newHand = player.hand.filter((_, index) => !this.selectedCardIndices.includes(index));
+        
+        const tray = gameData.tray || [];
+        const eligibleTrayCardIndex = tray.length > 0 ? tray.length - 1 : -1;
+
+        const newTray = [...tray, ...cardsToDiscard];
+
+        this.selectedCardIndices = [];
+        await update(this.gameRef, {
+            [`players/${this.myId}/hand`]: newHand,
+            'tray': newTray,
+            'turnPhase': 'pick',
+            'eligibleTrayCardIndex': eligibleTrayCardIndex 
+        });
+    }
+
+    async pickCard(source) {
+        const gameData = (await get(this.gameRef)).val();
+        const playerIds = Object.keys(gameData.players);
+        if (playerIds[gameData.turnIndex] !== this.myId || gameData.turnPhase !== 'pick') return;
+
+        let pickedCard;
+        let updates = {};
+        let drawPile = gameData.drawPile || [];
+        let tray = gameData.tray || [];
+
+        // Check if there are any pickable cards at all
+        const isDrawPileEmpty = drawPile.length === 0;
+        const eligibleIndex = gameData.eligibleTrayCardIndex;
+        const isTrayPickable = eligibleIndex > -1 && tray[eligibleIndex];
+        const canReshuffle = tray.length > 1;
+
+        if (isDrawPileEmpty && !isTrayPickable && !canReshuffle) {
+            // --- THIS FIXES THE "STUCK TURN" BUG ---
+            this.showToast("No cards to pick! Turn skipped.");
+            // Force the turn to the next player without picking a card.
+            let nextIndex = gameData.turnIndex;
+            let currentTurn = nextIndex;
+            do {
+                nextIndex = (nextIndex + 1) % playerIds.length;
+            } while (gameData.players[playerIds[nextIndex]] && !gameData.players[playerIds[nextIndex]].activeInRound && nextIndex !== currentTurn);
+            
+            updates.turnIndex = nextIndex;
+            updates.turnPhase = 'discard';
+            updates.eligibleTrayCardIndex = null;
+            await update(this.gameRef, updates);
+            return;
+        }
+
+        if (source === 'draw') {
+            if (drawPile.length === 0) {
+                // Reshuffle logic is now safe because we know we can.
+                let keptCard = null;
+                if (isTrayPickable) {
+                    keptCard = tray[eligibleIndex];
+                    cardsToShuffle = tray.filter((_, index) => index !== eligibleIndex);
+                } else {
+                    cardsToShuffle = tray;
+                }
+                drawPile = this._shuffle(cardsToShuffle);
+                tray = keptCard ? [keptCard] : [];
+            }
+            pickedCard = drawPile.pop();
+        } else { // 'tray'
+            if (!isTrayPickable) return; 
+            pickedCard = tray[eligibleIndex];
+            tray.splice(eligibleIndex, 1);
+        }
+        
+        updates.drawPile = drawPile;
+        updates.tray = tray;
+        updates[`players/${this.myId}/hand`] = [...(gameData.players[this.myId].hand || []), pickedCard];
+        
+        // --- NEW TURN ADVANCEMENT LOGIC TO SKIP INACTIVE PLAYERS ---
+        let nextIndex = gameData.turnIndex;
+        let currentTurn = nextIndex; // Failsafe for infinite loop
+        do {
+            nextIndex = (nextIndex + 1) % playerIds.length;
+        } while (gameData.players[playerIds[nextIndex]] && !gameData.players[playerIds[nextIndex]].activeInRound && nextIndex !== currentTurn);
+        
+        updates.turnIndex = nextIndex;
+        updates.turnPhase = 'discard';
+        updates.eligibleTrayCardIndex = null;
+
+        await update(this.gameRef, updates);
+    }
+    
+    async actionShow() {
+        const gameData = (await get(this.gameRef)).val();
+        const mySum = this._calculateHandSum(gameData.players[this.myId].hand);
+
+        if (mySum > 5) return this.showToast("Sum must be 5 or less to show.");
+        
+        // --- THIS IS THE FINAL, SIMPLIFIED LOGIC ---
+        // No matter who clicks the button (Host or Client), the action is the same:
+        // Announce to the database that a "Show" has been initiated.
+        await update(this.gameRef, { 
+            status: 'calculating_scores',
+            showInitiatedBy: this.myId 
+        });
+        // That's it. We now rely ENTIRELY on the onValue listener (in handleStateUpdate)
+        // to react to this change, for ALL players, including the host.
+        // This removes the race condition completely.
+    }
+
+    async _calculateAndSetScores(gameData) {
+        if (gameData.status !== 'calculating_scores') {
+            return;
+        }
+
+        const showerId = gameData.showInitiatedBy; 
+        if (!showerId || !gameData.players[showerId]) return;
+
+        // --- THE FIX IS BELOW ---
+
+        const playerIds = Object.keys(gameData.players);
+        const shower = gameData.players[showerId];
+        const showerSum = this._calculateHandSum(shower.hand);
+        let playerSums = {};
+        playerIds.forEach(pid => {
+            const player = gameData.players[pid];
+            if (player) {
+                // --- THIS IS THE FINAL, CRITICAL FIX ---
+                // If a player is not active in this round (i.e., they joined late),
+                // their sum for this calculation is considered the penalty score.
+                if (player.activeInRound === false) {
+                    playerSums[pid] = gameData.settings.latePenalty;
+                } else {
+                    // Otherwise, calculate their sum normally.
+                    playerSums[pid] = this._calculateHandSum(player.hand);
+                }
+            }
+        });
+        const playersWhoBeatOrTied = Object.keys(playerSums).filter(pid => playerSums[pid] <= showerSum);
+        
+        const updates = { 
+            status: 'round_over',
+            showInitiatedBy: null
+        };
+        const roundScores = {};
+        let message = "";
+        
+        if (playersWhoBeatOrTied.length === 1 && playersWhoBeatOrTied[0] === showerId) {
+            message = `${shower.name} wins with the lowest score!`;
+            playerIds.forEach(pid => {
+                // CORRECTED LINE:
+                if (gameData.players[pid]) roundScores[pid] = (pid === showerId) ? 0 : playerSums[pid];
+            });
+        } else {
+            const penaltyCount = playersWhoBeatOrTied.filter(pid => pid !== showerId).length;
+            const penalty = 30 * penaltyCount;
+            message = `${shower.name} made a wrong show!`;
+            if (showerSum === 0 && playersWhoBeatOrTied.length > 1) {
+                 message = `A 0-0 tie! Multiple players get 0.`;
+            }
+            playerIds.forEach(pid => {
+                // CORRECTED LINE:
+                if (gameData.players[pid]) {
+                    if (playersWhoBeatOrTied.includes(pid)) {
+                        roundScores[pid] = 0;
+                    } else {
+                        roundScores[pid] = playerSums[pid];
+                    }
+                }
+            });
+            roundScores[showerId] = penalty;
+        }
+        
+        updates[`scores/${gameData.currentRound}`] = roundScores;
+        updates.roundEndMessage = message;
+        await update(this.gameRef, updates);
+
+        setTimeout(async () => {
+             if (this.isHost) {
+                await this.startNewRound(gameData.currentRound + 1);
+            }
+        }, 15000);
+    }
+    
+    showScoreboard() { document.getElementById('scoreboard-screen').classList.add('active-screen'); }
+    closeScoreboard() { document.getElementById('scoreboard-screen').classList.remove('active-screen'); }
+    // --- ADD THESE TWO NEW FUNCTIONS ---
+    showHowToPlay() { document.getElementById('how-to-play-screen').classList.add('active-screen'); }
+    closeHowToPlay() { document.getElementById('how-to-play-screen').classList.remove('active-screen'); }
+    // --- CARD & DECK LOGIC (PRIVATE) ---
+
+    showPlayerList() { 
+        // We call render one more time to ensure the list is up-to-date
+        this.renderPlayerList(this.lastGameState); 
+        document.getElementById('player-list-screen').classList.add('active-screen');
+    }
+
+    closePlayerList() { document.getElementById('player-list-screen').classList.remove('active-screen'); }
+
+    renderPlayerList(gameData) {
+        const { players, hostId } = gameData;
+        const listEl = document.getElementById('game-player-list');
+        listEl.innerHTML = '';
+
+        if (!players) return;
+
+        Object.entries(players).forEach(([pid, p]) => {
+            if (!p) return; // Skip if player data is null (e.g., just kicked)
+            
+            let li = document.createElement('li');
+            li.innerHTML = `<span>${p.name} ${pid === hostId ? '👑' : ''}</span>`;
+            
+            // If I am the host AND this player is not me, show the kick button
+            if (this.isHost && pid !== this.myId) {
+                let kickBtn = document.createElement('button');
+                kickBtn.innerText = 'Kick';
+                kickBtn.className = 'kick-btn';
+                kickBtn.onclick = () => this.kickPlayer(pid);
+                li.appendChild(kickBtn);
+            }
+            listEl.appendChild(li);
+        });
+    }
+
+    _createDeck() {
+        let deck = [];
+        const SUITS = ['♥', '♦', '♣', '♠'];
+        for (let d = 0; d < 2; d++) {
+            for (let s of SUITS) {
+                for (let v = 1; v <= 13; v++) deck.push({ v, s });
+            }
+        }
+        for (let j = 0; j < 7; j++) deck.push({ v: 0, s: 'Joker' });
+        return deck;
+    }
+
+    _shuffle(deck) {
+        for (let i = deck.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [deck[i], deck[j]] = [deck[j], deck[i]];
+        }
+        return deck;
+    }
+    
+    _getCardDisplay(card) {
+        if (card.s === 'Joker') return { display: 'JOKER', color: 'black' };
+        const color = ['♥', '♦'].includes(card.s) ? 'red' : 'black';
+        let display;
+        if (card.v === 1) display = 'A';
+        else if (card.v === 11) display = 'J';
+        else if (card.v === 12) display = 'Q';
+        else if (card.v === 13) display = 'K';
+        else display = card.v;
+        return { display, color };
+    }
+
+    _calculateHandSum(hand) {
+        if (!hand) return 0;
+        return hand.reduce((sum, card) => sum + card.v, 0);
+    }
+    
+    _toggleCardSelect(index, myHand) {
+        if (this.selectedCardIndices.includes(index)) {
+            this.selectedCardIndices = this.selectedCardIndices.filter(i => i !== index);
+        } else {
+            if (this.selectedCardIndices.length > 0) {
+                const firstSelectedValue = myHand[this.selectedCardIndices[0]].v;
+                if (myHand[index].v !== firstSelectedValue) {
+                    this.selectedCardIndices = [index];
+                } else {
+                    this.selectedCardIndices.push(index);
+                }
+            } else {
+                this.selectedCardIndices.push(index);
+            }
+        }
+    }
+
+    toggleFullscreen() {
+        if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen().catch(err => {
+                alert(`Error attempting to enable full-screen mode: ${err.message} (${err.name})`);
+            });
+        } else {
+            if (document.exitFullscreen) {
+                document.exitFullscreen();
+            }
+        }
+    }
+    animateOpponentPick(source, playerId) {
+        const animationLayer = document.getElementById('animation-layer');
+        const sourceEl = document.getElementById(source === 'draw' ? 'draw-pile' : 'discard-pile');
+        const opponentEl = document.querySelector(`.opponent[data-pid="${playerId}"]`);
+
+        if (!sourceEl || !opponentEl) return;
+
+        const sourceRect = sourceEl.getBoundingClientRect();
+        const opponentRect = opponentEl.getBoundingClientRect();
+        const cardEl = document.createElement('div');
+
+        if (source === 'tray') {
+            const eligibleIndex = this.lastGameState.eligibleTrayCardIndex;
+            const lastTray = this.lastGameState.tray;
+
+            if (eligibleIndex > -1 && lastTray && lastTray[eligibleIndex]) {
+                const pickedCardData = lastTray[eligibleIndex];
+                
+                // --- THIS IS THE CORRECTED LOGIC ---
+                const { display, color } = this._getCardDisplay(pickedCardData);
+                const isJoker = pickedCardData.s === 'Joker';
+                
+                cardEl.className = `card ${color} ${isJoker ? 'joker' : ''}`;
+                cardEl.innerHTML = `<div class="card-corner">${display}<br>${isJoker ? '' : pickedCardData.s}</div>
+                                    <div class="card-center">${isJoker ? 'JOKER' : pickedCardData.s}</div>
+                                    <div class="card-corner bottom">${display}<br>${isJoker ? '' : pickedCardData.s}</div>`;
+                // --- END OF CORRECTION ---
+
+            } else {
+                cardEl.className = 'card card-back';
+            }
+        } else {
+            cardEl.className = 'card card-back';
+        }
+        
+        cardEl.style.position = 'fixed';
+        cardEl.style.left = `${sourceRect.left}px`;
+        cardEl.style.top = `${sourceRect.top}px`;
+        cardEl.style.width = `${sourceRect.width}px`;
+        cardEl.style.height = `${sourceRect.height}px`;
+        cardEl.style.transition = 'all 0.6s cubic-bezier(0.5, 0, 0.75, 0)';
+
+        animationLayer.appendChild(cardEl);
+
+        requestAnimationFrame(() => {
+            cardEl.style.transform = `translate(${opponentRect.left - sourceRect.left}px, ${opponentRect.top - sourceRect.top}px) scale(0.2)`;
+            cardEl.style.opacity = '0.5';
+        });
+
+        setTimeout(() => {
+            if (animationLayer.contains(cardEl)) {
+                animationLayer.removeChild(cardEl);
+            }
+        }, 600);
+    }
+
+    // --- UI RENDERING ---
+
+    render(gameData) {
+        const { status, players, hostId, turnIndex, turnPhase, settings } = gameData;
+
+        if (status === 'lobby') {
+            this.showScreen('lobby-screen');
+            document.getElementById('lobby-code-display').innerText = this.gameCode;
+            document.getElementById('host-settings').style.display = this.isHost ? 'block' : 'none';
+            document.getElementById('start-game-btn').style.display = this.isHost ? 'block' : 'none';
+            document.getElementById('waiting-text').style.display = this.isHost ? 'none' : 'block';
+            if(this.isHost) document.getElementById('late-penalty-input').value = settings.latePenalty;
+
+            const list = document.getElementById('lobby-list');
+            list.innerHTML = '';
+            Object.entries(players || {}).forEach(([pid, p]) => {
+                let li = document.createElement('li');
+                li.innerHTML = `<span>${p.name} ${pid === hostId ? '👑' : ''}</span><span style="color:${p.online ? 'lightgreen' : 'gray'}">${p.online ? 'Online' : 'Offline'}</span>`;
+                if (this.isHost && pid !== this.myId) {
+                    let kickBtn = document.createElement('button');
+                    kickBtn.innerText = 'Kick';
+                    kickBtn.className = 'danger';
+                    kickBtn.style.cssText = 'font-size:10px; padding: 4px 8px; margin:0;';
+                    kickBtn.onclick = () => this.kickPlayer(pid);
+                    li.appendChild(kickBtn);
+                }
+                list.appendChild(li);
+            });
+
+        } else if (status === 'playing' || status === 'round_over') { // NOTE: 'calculating_scores' is removed from here.
+            this.showScreen('game-screen');
+            
+            // The logic block for the host to calculate scores has been completely REMOVED from here.
+            
+            const playerIds = Object.keys(players);
+            const me = players[this.myId];
+            if (!me) return;
+            
+            const myHand = me.hand || [];
+            const currentPlayerId = playerIds[turnIndex];
+            // Safety check for currentPlayer
+            const currentPlayer = players[currentPlayerId] || { name: 'Unknown' };
+            const isMyTurn = currentPlayerId === this.myId;
+
+            // Top bar
+            document.getElementById('game-room-id').innerText = this.gameCode;
+            document.getElementById('round-indicator').innerText = `Round: ${gameData.currentRound}`;
+            document.getElementById('turn-indicator').innerText = isMyTurn ? `YOUR TURN (${turnPhase.toUpperCase()})` : `${currentPlayer.name}'s Turn`;
+
+            // Opponents
+            this.renderOpponents(players, currentPlayerId);
+
+            // Decks
+            const drawPileEl = document.getElementById('draw-pile');
+            const discardPileEl = document.getElementById('discard-pile');
+            document.getElementById('draw-count').innerText = (gameData.drawPile || []).length;
+            
+            const tray = gameData.tray || [];
+            const isMyPickPhase = isMyTurn && turnPhase === 'pick';
+
+            const eligibleIndex = gameData.eligibleTrayCardIndex;
+            const topCardToDisplay = (isMyPickPhase && eligibleIndex > -1 && tray[eligibleIndex])
+                ? tray[eligibleIndex] 
+                : tray[tray.length - 1];
+
+            if (topCardToDisplay) {
+                const { display, color } = this._getCardDisplay(topCardToDisplay);
+                const isJoker = topCardToDisplay.s === 'Joker';
+                discardPileEl.innerHTML = `<div class="card ${color} ${isJoker ? 'joker' : ''}" style="position:absolute;">
+                    <div class="card-corner">${display}<br>${isJoker ? '' : topCardToDisplay.s}</div><div class="card-center">${isJoker ? 'JOKER' : topCardToDisplay.s}</div><div class="card-corner bottom">${display}<br>${isJoker ? '' : topCardToDisplay.s}</div>
+                </div>`;
+            } else {
+                discardPileEl.innerHTML = `<span>TRAY<br>(Empty)</span>`;
+            }
+            
+            // My Hand
+            const handContainer = document.getElementById('hand-container');
+            handContainer.innerHTML = '';
+            myHand.slice().sort((a,b) => a.v - b.v).forEach((card) => {
+                const realIndex = myHand.findIndex(c => c === card);
+                const { display, color } = this._getCardDisplay(card);
+                const isJoker = card.s === 'Joker';
+                let cDiv = document.createElement('div');
+                cDiv.className = `card ${color} ${isJoker ? 'joker' : ''}`;
+                cDiv.dataset.index = realIndex;
+                cDiv.innerHTML = `<div class="card-corner">${display}<br>${isJoker ? '' : card.s}</div><div class="card-center">${isJoker ? 'JOKER' : card.s}</div><div class="card-corner bottom">${display}<br>${isJoker ? '' : card.s}</div>`;
+                cDiv.onclick = () => {
+                    if (isMyTurn && turnPhase === 'discard') {
+                        this._toggleCardSelect(realIndex, myHand);
+                        this.render(gameData); // Re-rendering for selection is fine
+                    }
+                };
+                if (this.selectedCardIndices.includes(realIndex)) cDiv.classList.add('selected');
+                handContainer.appendChild(cDiv);
+            });
+
+            // Controls
+            const btnDiscard = document.getElementById('btn-discard');
+            const btnShow = document.getElementById('btn-show');
+            const currentSum = this._calculateHandSum(myHand);
+            document.getElementById('hand-sum-display').innerText = `Sum: ${currentSum}`;
+            
+            btnDiscard.disabled = true;
+            btnShow.disabled = true;
+            drawPileEl.classList.remove('actionable');
+            discardPileEl.classList.remove('actionable');
+
+            if (isMyTurn) {
+                if (turnPhase === 'discard') {
+                    btnShow.disabled = currentSum > 5;
+                    if (this.selectedCardIndices.length > 0) {
+                        // --- THIS IS THE FIX FOR THE DISCARD BUTTON ---
+                        if (this.selectedCardIndices.length === 1) {
+                            // If only one card is selected, the button is always enabled.
+                            btnDiscard.disabled = false;
+                        } else {
+                            // If multiple cards are selected, check if they are the same value.
+                            const selectedCards = this.selectedCardIndices.map(i => myHand[i]);
+                            const allSame = selectedCards.every(c => c.v === selectedCards[0].v);
+                            btnDiscard.disabled = !allSame;
+                        }
+                    }
+                } else { // pick phase
+                    drawPileEl.classList.add('actionable');
+                    if (eligibleIndex > -1 && tray[eligibleIndex]) {
+                         discardPileEl.classList.add('actionable');
+                    }
+                }
+            }
+
+            
+            if (status === 'round_over') {
+                this.renderScoreboard(gameData);
+                document.getElementById('scoreboard-screen').classList.add('active-screen');
+                document.getElementById('round-end-message').innerText = gameData.roundEndMessage || "Round Over!";
+            }
+        }
+    }
+    
+    renderScoreboard(gameData) {
+        const table = document.getElementById('score-table');
+        table.innerHTML = '';
+        const players = gameData.players || {};
+        const playerIds = Object.keys(players);
+        if (playerIds.length === 0) return;
+
+        // Header
+        const thead = document.createElement('thead');
+        let headerRow = '<tr><th>Round</th>';
+        playerIds.forEach(pid => { if(players[pid]) headerRow += `<th>${players[pid].name}</th>` });
+        headerRow += '</tr>';
+        thead.innerHTML = headerRow;
+        table.appendChild(thead);
+
+        // Body
+        const tbody = document.createElement('tbody');
+        const totals = playerIds.reduce((acc, pid) => ({ ...acc, [pid]: 0 }), {});
+        for (let r = 1; r <= gameData.currentRound; r++) {
+            let row = `<tr><td>${r}</td>`;
+            playerIds.forEach(pid => {
+                if(players[pid]) {
+                    const score = gameData.scores?.[r]?.[pid] ?? 0;
+                    row += `<td>${score}</td>`;
+                    totals[pid] += score;
+                }
+            });
+            row += '</tr>';
+            tbody.innerHTML += row;
+        }
+        table.appendChild(tbody);
+
+        // Footer
+        const tfoot = document.createElement('tfoot');
+        let footerRow = '<tr><td>TOTAL</td>';
+        playerIds.forEach(pid => { if(players[pid]) footerRow += `<td>${totals[pid]}</td>` });
+        footerRow += '</tr>';
+        tfoot.innerHTML = footerRow;
+        table.appendChild(tfoot);
+    }
+    renderOpponents(players, currentPlayerId) {
+        const oppContainer = document.getElementById('opponents-container');
+        oppContainer.innerHTML = '';
+        const opponentIds = Object.keys(players).filter(pid => pid !== this.myId && players[pid]);
+
+        if (opponentIds.length === 0) return;
+
+        // Define the arc for opponents (top 180 degrees of an ellipse)
+        const angleSpan = 180; // The total spread in degrees
+        const angleOffset = -180; // Start from the left (-180 degrees)
+        
+        // Calculate the angle between each opponent
+        const angleStep = angleSpan / (opponentIds.length + 1);
+
+        // Define the shape of the table (an ellipse wider than it is tall)
+        const radiusX = window.innerWidth * 0.4;
+        const radiusY = window.innerHeight * 0.35;
+
+        opponentIds.forEach((pid, i) => {
+            const p = players[pid];
+            // Calculate the angle for this specific opponent
+            const angleDeg = angleOffset + (i + 1) * angleStep;
+            const angleRad = angleDeg * (Math.PI / 180);
+
+            // Calculate X and Y coordinates using trigonometry
+            const x = radiusX * Math.cos(angleRad);
+            const y = radiusY * Math.sin(angleRad);
+            
+            let div = document.createElement('div');
+            div.className = `opponent ${pid === currentPlayerId ? 'active-turn' : ''}`;
+            div.dataset.pid = pid; 
+            // Apply the calculated position. The first translate centers the element on the point.
+            div.style.transform = `translate(-50%, -50%) translate(${x}px, ${y}px)`;
+            div.innerHTML = `<div>${p.name}</div><div class="card-icon">🂠 ${(p.hand || []).length}</div>`;
+            
+            oppContainer.appendChild(div);
+        });
+    }
+}
+
+window.app = new PointGame();
+
+window.addEventListener('load', () => {
+    const params = new URLSearchParams(window.location.search);
+    const gameCode = params.get('gameCode');
+    if (gameCode) {
+        document.getElementById('room-code-input').value = gameCode;
+        app.showJoinInput();
+        app.showToast("Enter your name to join!");
+    }
+});
+</script>
+</body>
+</html>
