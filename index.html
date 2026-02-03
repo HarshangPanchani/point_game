@@ -501,6 +501,98 @@
             color: #000;
         }
 
+        /* ===== CASINO DEALER ===== */
+        #dealer-container {
+            position: absolute;
+            top: 2%;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 15;
+            width: 120px;
+            height: 140px;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.6);
+            border: 3px solid #d4af37;
+        }
+
+        #dealer-image {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            object-position: center top;
+        }
+
+        /* ===== OPPONENTS POSITIONING ===== */
+        #opponents-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 20;
+        }
+
+        .opponent {
+            position: absolute;
+            background: linear-gradient(135deg, rgba(30, 30, 40, 0.98), rgba(15, 15, 25, 0.95));
+            backdrop-filter: blur(12px);
+            padding: 12px 16px;
+            border-radius: 16px;
+            text-align: center;
+            font-size: 14px;
+            font-weight: 600;
+            border: 3px solid rgba(212, 175, 55, 0.6);
+            min-width: 110px;
+            transition: all 0.3s ease;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.8),
+                inset 0 1px 0 rgba(255, 255, 255, 0.15),
+                0 0 20px rgba(212, 175, 55, 0.3);
+            pointer-events: auto;
+            color: #fff;
+        }
+
+        .opponent:hover {
+            transform: translateY(-3px) scale(1.02);
+            border-color: rgba(212, 175, 55, 0.9);
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.9),
+                0 0 30px rgba(212, 175, 55, 0.5);
+        }
+
+        .opponent.active-turn {
+            border: 4px solid #FFD700;
+            box-shadow: 0 0 30px rgba(255, 215, 0, 1),
+                0 8px 25px rgba(0, 0, 0, 0.8);
+            animation: glowPulse 1.5s ease-in-out infinite;
+        }
+
+        @keyframes glowPulse {
+
+            0%,
+            100% {
+                box-shadow: 0 0 30px rgba(255, 215, 0, 1), 0 8px 25px rgba(0, 0, 0, 0.8);
+            }
+
+            50% {
+                box-shadow: 0 0 50px rgba(255, 215, 0, 1), 0 8px 25px rgba(0, 0, 0, 0.8);
+            }
+        }
+
+        .opponent>div:first-child {
+            color: #FFD700;
+            font-size: 15px;
+            font-weight: 700;
+            margin-bottom: 6px;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+        }
+
+        .opponent .card-icon {
+            color: #fff;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
         /* Notification */
         #toast {
             position: fixed;
@@ -581,6 +673,12 @@
                 <span id="round-indicator">Round: 1</span>
                 <span id="turn-indicator">Waiting...</span>
             </div>
+
+            <!-- Casino Dealer -->
+            <div id="dealer-container">
+                <img src="casino_dealer_character_1770138357504.png" alt="Dealer" id="dealer-image">
+            </div>
+
             <div id="opponents-container"></div>
 
             <div id="table-area">
@@ -1739,32 +1837,44 @@
 
                 if (opponentIds.length === 0) return;
 
-                // Define the arc for opponents (top 180 degrees of an ellipse)
-                const angleSpan = 180; // The total spread in degrees
-                const angleOffset = -180; // Start from the left (-180 degrees)
+                // Strategic positioning for up to 10 players
+                // Avoid: top-center (0°, dealer) and bottom-center (180°, player)
+                // Angles: 0° = right, 90° = bottom, 180° = left, 270° = top
 
-                // Calculate the angle between each opponent
-                const angleStep = angleSpan / (opponentIds.length + 1);
+                const positions = [
+                    { angle: 225, radius: 0.42 },  // Top-left
+                    { angle: 315, radius: 0.42 },  // Top-right
+                    { angle: 200, radius: 0.40 },  // Left-upper
+                    { angle: 340, radius: 0.40 },  // Right-upper
+                    { angle: 160, radius: 0.42 },  // Left-mid
+                    { angle: 20, radius: 0.42 },   // Right-mid
+                    { angle: 245, radius: 0.38 },  // Top-left-2
+                    { angle: 295, radius: 0.38 },  // Top-right-2
+                    { angle: 140, radius: 0.38 },  // Left-lower
+                    { angle: 40, radius: 0.38 },   // Right-lower
+                ];
 
-                // Define the shape of the table (an ellipse wider than it is tall)
-                const radiusX = window.innerWidth * 0.4;
-                const radiusY = window.innerHeight * 0.35;
+                const centerX = window.innerWidth / 2;
+                const centerY = window.innerHeight / 2;
 
                 opponentIds.forEach((pid, i) => {
                     const p = players[pid];
-                    // Calculate the angle for this specific opponent
-                    const angleDeg = angleOffset + (i + 1) * angleStep;
-                    const angleRad = angleDeg * (Math.PI / 180);
+                    const pos = positions[i % positions.length];
 
-                    // Calculate X and Y coordinates using trigonometry
-                    const x = radiusX * Math.cos(angleRad);
-                    const y = radiusY * Math.sin(angleRad);
+                    // Convert angle to radians
+                    const angleRad = pos.angle * (Math.PI / 180);
+                    const radiusX = window.innerWidth * pos.radius;
+                    const radiusY = window.innerHeight * pos.radius * 0.85;
+
+                    const x = centerX + radiusX * Math.cos(angleRad);
+                    const y = centerY + radiusY * Math.sin(angleRad);
 
                     let div = document.createElement('div');
                     div.className = `opponent ${pid === currentPlayerId ? 'active-turn' : ''}`;
                     div.dataset.pid = pid;
-                    // Apply the calculated position. The first translate centers the element on the point.
-                    div.style.transform = `translate(-50%, -50%) translate(${x}px, ${y}px)`;
+                    div.style.left = x + 'px';
+                    div.style.top = y + 'px';
+                    div.style.transform = 'translate(-50%, -50%)';
                     div.innerHTML = `<div>${p.name}</div><div class="card-icon">🂠 ${(p.hand || []).length}</div>`;
 
                     oppContainer.appendChild(div);
