@@ -18,8 +18,18 @@ const db = getDatabase(firebaseApp);
 
 class PointGame {
             constructor() {
-                this.myId = localStorage.getItem('pointGamePlayerId') || 'player_' + Date.now() + Math.random().toString(36).substr(2, 5);
-                localStorage.setItem('pointGamePlayerId', this.myId);
+                // Persistent user ID ensures same player identity across reloads
+                if (!localStorage.getItem('pointGamePlayerId')) {
+                    localStorage.setItem('pointGamePlayerId', 'player_' + Date.now() + Math.random().toString(36).substr(2, 5));
+                }
+                this.myId = localStorage.getItem('pointGamePlayerId');
+
+                // Unique session instance per tab/window to avoid accidental same-ID collisions
+                if (!sessionStorage.getItem('pointGameSessionId')) {
+                    sessionStorage.setItem('pointGameSessionId', 'session_' + Date.now() + Math.random().toString(36).substr(2, 8));
+                }
+                this.sessionId = sessionStorage.getItem('pointGameSessionId');
+
                 this.myName = '';
                 this.isHost = false;
                 this.gameCode = null;
@@ -27,6 +37,9 @@ class PointGame {
                 this.selectedCardIndices = [];
                 this.lastGameState = {}; // For detecting changes to animate
                 this.hostMigrationRef = null;
+                this.hostAutoMigrationTimer = null;
+                this.hostHeartbeatInterval = null;
+                this.hostOfflineTimeoutMs = 50000; // 50 seconds timeout for host failover
             }
 
             // --- LOBBY & CONNECTION ---
@@ -74,7 +87,10 @@ class PointGame {
                 const initialGameState = {
                     hostId: this.myId,
                     status: 'lobby',
-                    settings: { latePenalty: 10 },
+                    settings: {
+                        latePenalty: 10,
+                        hostOfflineTimeoutSeconds: 50
+                    },
                     players: { [this.myId]: { name: this.myName, online: true } },
                     currentRound: 0,
                 };
@@ -121,27 +137,70 @@ class PointGame {
             }
 
             listenForGameUpdates() {
-                const playerStatusRef = ref(db, `games/${this.gameCode}/players/${this.myId}/online`);
-                onDisconnect(playerStatusRef).set(false);
+                const playerBaseRef = ref(db, `games/${this.gameCode}/players/${this.myId}`);
 
-                // --- AUTO-SPECTATOR ON DISCONNECT ---
-                // When player disconnects, automatically make them a spectator
-                const playerActiveRef = ref(db, `games/${this.gameCode}/players/${this.myId}/activeInRound`);
-                onDisconnect(playerActiveRef).set(false);
-                // --- END AUTO-SPECTATOR ---
+                // Keep player presence consistent for UI/monitoring
+                update(playerBaseRef, {
+                    online: true,
+                    sessionId: this.sessionId,
+                    lastSeen: serverTimestamp()
+                });
+
+                onDisconnect(playerBaseRef).set({
+                    name: this.myName,
+                    online: false,
+                    sessionId: this.sessionId,
+                    lastSeen: serverTimestamp()
+                });
 
                 // --- START: HOST MIGRATION LOGIC ---
+                const hostStatusRef = ref(db, `games/${this.gameCode}/hostStatus`);
+
                 if (this.isHost) {
-                    // If I am the host, I set up a trigger that fires when I disconnect.
-                    this.hostMigrationRef = ref(db, `games/${this.gameCode}/hostDisconnected`);
-                    onDisconnect(this.hostMigrationRef).set(true);
+                    // Mark host live in state so we can detect lost host over the timeout window.
+                    set(hostStatusRef, {
+                        hostId: this.myId,
+                        online: true,
+                        lastSeen: serverTimestamp(),
+                        migrating: false
+                    });
+
+                    // Setup onDisconnect for host status as fallback
+                    onDisconnect(hostStatusRef).set({
+                        hostId: this.myId,
+                        online: false,
+                        lastSeen: serverTimestamp(),
+                        migrating: true
+                    });
+
+                    // Keep host heartbeat updating status while running.
+                    if (this.hostHeartbeatInterval) clearInterval(this.hostHeartbeatInterval);
+                    this.hostHeartbeatInterval = setInterval(() => {
+                        set(hostStatusRef, {
+                            hostId: this.myId,
+                            online: true,
+                            lastSeen: serverTimestamp(),
+                            migrating: false
+                        });
+                    }, 8000);
                 }
 
-                // Listen for the host disconnection flag
-                const hostDisconnectRef = ref(db, `games/${this.gameCode}/hostDisconnected`);
-                onValue(hostDisconnectRef, (snapshot) => {
-                    if (snapshot.val() === true) {
-                        this.handleHostMigration();
+                onValue(hostStatusRef, (snapshot) => {
+                    const hostStatus = snapshot.val();
+                    if (!hostStatus) return;
+
+                    // Update local host flag, so UI controls are correct
+                    this.isHost = hostStatus.hostId === this.myId;
+
+                    // If target host is offline for too long, pick next host
+                    if (hostStatus.online === false && hostStatus.lastSeen) {
+                        const now = Date.now();
+                        const lastSeen = Number(hostStatus.lastSeen);
+                        if (!isNaN(lastSeen) && now - lastSeen >= this.hostOfflineTimeoutMs) {
+                            if (!this.isHost) {
+                                this.handleHostMigration();
+                            }
+                        }
                     }
                 });
                 // --- END: HOST MIGRATION LOGIC ---
@@ -165,49 +224,63 @@ class PointGame {
             }
             async handleHostMigration() {
                 const gameData = (await get(this.gameRef)).val();
-                if (!gameData || gameData.hostDisconnected !== true) return;
+                if (!gameData) return;
 
-                const oldHostId = gameData.hostId;
-                const onlinePlayerIds = Object.keys(gameData.players).filter(pid => gameData.players[pid] && gameData.players[pid].online);
-
-                if (onlinePlayerIds.length === 0) return;
-
-                const newHostId = onlinePlayerIds.find(pid => pid !== oldHostId);
-
-                if (newHostId && newHostId === this.myId) {
-                    this.showToast("The host disconnected. You are the new host!");
-                    this.isHost = true;
-
-                    if (this.hostMigrationRef) {
-                        onDisconnect(this.hostMigrationRef).cancel();
-                    }
-                    this.hostMigrationRef = ref(db, `games/${this.gameCode}/hostDisconnected`);
-                    onDisconnect(this.hostMigrationRef).set(true);
-
-                    // --- FIX FOR BUG #2: MAKE OLD HOST A SPECTATOR ---
-                    const updates = {
-                        hostId: this.myId,
-                        hostDisconnected: null, // Clear the migration flag
-                        [`players/${oldHostId}/activeInRound`]: false // Set the old host to be a spectator
-                    };
-
-                    // --- FIX FOR BUG #2: Host migration now advances turn if host was current player ---
-                    if (gameData.status === 'playing' && gameData.players[oldHostId] && Object.keys(gameData.players)[gameData.turnIndex] === oldHostId) {
-                        const playerIds = Object.keys(gameData.players);
-                        let nextIndex = gameData.turnIndex;
-                        let failsafe = 0;
-                        do {
-                            nextIndex = (nextIndex + 1) % playerIds.length;
-                            failsafe++;
-                        } while (
-                            (gameData.players[playerIds[nextIndex]] && gameData.players[playerIds[nextIndex]].activeInRound === false && playerIds[nextIndex] !== oldHostId) &&
-                            failsafe < playerIds.length
-                        );
-                        updates.turnIndex = nextIndex;
-                    }
-
-                    await update(this.gameRef, updates);
+                const currentHostId = gameData.hostId;
+                if (!currentHostId || currentHostId === this.myId) {
+                    return; // Either already no host or this client is host.
                 }
+
+                const currentHost = gameData.players?.[currentHostId];
+                if (currentHost && currentHost.online === true) {
+                    return; // Host still available.
+                }
+
+                // Candidate set: active players who are not the old host.
+                const candidateIds = Object.keys(gameData.players || {}).filter(pid => {
+                    if (pid === currentHostId) return false;
+                    const p = gameData.players[pid];
+                    return p && p.activeInRound !== false; // still eligible
+                });
+
+                // If no active player, fall back to any player except old host.
+                const fallbackCandidates = Object.keys(gameData.players || {}).filter(pid => pid !== currentHostId);
+                const newHostId = candidateIds[0] || fallbackCandidates[0];
+
+                if (!newHostId || newHostId !== this.myId) {
+                    return; // Only the chosen client should execute the promotion path.
+                }
+
+                this.showToast("Host lost connection; you are the new host.");
+                this.isHost = true;
+
+                // Write updated hostStatus.
+                const hostStatusRef = ref(db, `games/${this.gameCode}/hostStatus`);
+                set(hostStatusRef, {
+                    hostId: this.myId,
+                    online: true,
+                    lastSeen: serverTimestamp(),
+                    migrating: false
+                });
+
+                const updates = {
+                    hostId: this.myId,
+                    hostDisconnected: null
+                };
+
+                // Rotate turn if old host currently active player in playing state
+                if (gameData.status === 'playing' && gameData.players[currentHostId] && Object.keys(gameData.players)[gameData.turnIndex] === currentHostId) {
+                    const playerIds = Object.keys(gameData.players);
+                    let nextIndex = gameData.turnIndex;
+                    let failsafe = 0;
+                    do {
+                        nextIndex = (nextIndex + 1) % playerIds.length;
+                        failsafe++;
+                    } while (failsafe < playerIds.length && gameData.players[playerIds[nextIndex]] && gameData.players[playerIds[nextIndex]].activeInRound === false);
+                    updates.turnIndex = nextIndex;
+                }
+
+                await update(this.gameRef, updates);
             }
 
             async togglePlayerActiveState(playerId) {
@@ -283,9 +356,9 @@ class PointGame {
                     const currentPlayerId = playerIds[gameData.turnIndex];
                     const currentPlayer = gameData.players[currentPlayerId];
 
-                    // Check if current player is offline OR spectator
-                    if (currentPlayer && (!currentPlayer.online || currentPlayer.activeInRound === false)) {
-                        // Current player is offline or spectator - advance turn!
+                    // Check if current player is spectator for this round.
+                    if (currentPlayer && currentPlayer.activeInRound === false) {
+                        // Current player is spectator - advance turn!
                         let nextIndex = gameData.turnIndex;
                         let failsafe = 0;
                         const startIndex = nextIndex;
@@ -295,8 +368,8 @@ class PointGame {
                             failsafe++;
 
                             const nextPlayer = gameData.players[playerIds[nextIndex]];
-                            // Found an active, online player
-                            if (nextPlayer && nextPlayer.online && nextPlayer.activeInRound !== false) {
+                            // Found an active player
+                            if (nextPlayer && nextPlayer.activeInRound !== false) {
                                 break;
                             }
                         } while (failsafe < playerIds.length && nextIndex !== startIndex);
@@ -308,7 +381,7 @@ class PointGame {
                                 turnPhase: 'discard'
                             };
                             update(this.gameRef, updates);
-                            this.showToast(`Turn advanced (${currentPlayer.name} is ${!currentPlayer.online ? 'offline' : 'spectator'})`);
+                            this.showToast(`Turn advanced (spectator ${currentPlayer.name} skipped)`);
                             return; // Don't render yet, wait for the update to come back
                         }
                     }
