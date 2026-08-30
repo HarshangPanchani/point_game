@@ -36,6 +36,7 @@ class PointGame {
         this.gameRef = null;
         this.selectedCardIndices = [];
         this.lastGameState = {}; // For detecting changes to animate
+        this.pendingLocalPickAnim = null; // Lock for local player pick animation
         this.hostMigrationRef = null;
         this.hostAutoMigrationTimer = null;
         this.hostHeartbeatInterval = null;
@@ -342,26 +343,35 @@ class PointGame {
         // 2. If no special action is needed, render the UI with the latest data.
         this.render(gameData);
 
-        // 3. AFTER rendering, check if an animation needs to be triggered.
+        // 3. AFTER rendering, check if animations need to be triggered.
         if (
             this.lastGameState.status === 'playing' &&
-            gameData.status === 'playing' &&
-            gameData.turnIndex !== this.lastGameState.turnIndex
+            gameData.status === 'playing'
         ) {
+            const newTray = gameData.tray || [];
+            const oldTray = this.lastGameState.tray || [];
             const lastPlayers = this.lastGameState.players;
-            if (lastPlayers) { // Safety check
+
+            if (lastPlayers) {
                 const lastPlayerIds = Object.keys(lastPlayers).sort();
                 const lastTurnPlayerId = lastPlayerIds[this.lastGameState.turnIndex];
-                if (lastTurnPlayerId && lastTurnPlayerId !== this.myId && this.lastGameState.turnPhase === 'pick') {
-                    const newDrawCount = (gameData.drawPile || []).length;
-                    const oldDrawCount = (this.lastGameState.drawPile || []).length;
-                    const newTrayCount = (gameData.tray || []).length;
-                    const oldTrayCount = (this.lastGameState.tray || []).length;
 
-                    if (newDrawCount < oldDrawCount) {
-                        this.animateOpponentPick('draw', lastTurnPlayerId);
-                    } else if (newTrayCount < oldTrayCount) {
-                        this.animateOpponentPick('tray', lastTurnPlayerId);
+                // A. Check for DISCARD animation (cards added to tray)
+                if (newTray.length > oldTray.length && lastTurnPlayerId) {
+                    const discardedCards = newTray.slice(oldTray.length);
+                    this.animateDiscard(lastTurnPlayerId, discardedCards);
+                }
+                // B. Check for OPPONENT PICK animation (cards taken from pile)
+                else if (gameData.turnIndex !== this.lastGameState.turnIndex) {
+                    if (lastTurnPlayerId && lastTurnPlayerId !== this.myId && this.lastGameState.turnPhase === 'pick') {
+                        const newDrawCount = (gameData.drawPile || []).length;
+                        const oldDrawCount = (this.lastGameState.drawPile || []).length;
+
+                        if (newDrawCount < oldDrawCount) {
+                            this.animateOpponentPick('draw', lastTurnPlayerId);
+                        } else if (newTray.length < oldTray.length) {
+                            this.animateOpponentPick('tray', lastTurnPlayerId);
+                        }
                     }
                 }
             }
@@ -625,6 +635,10 @@ class PointGame {
         updates.turnIndex = nextIndex;
         updates.turnPhase = 'discard';
         updates.eligibleTrayCardIndex = null;
+
+        // Trigger local pick animation for local player
+        this.pendingLocalPickAnim = { card: pickedCard, source: source };
+        this.animateMyPick(source, pickedCard, gameData.players[this.myId]?.hand || []);
 
         await update(this.gameRef, updates);
     }
@@ -896,6 +910,196 @@ class PointGame {
         }, 650); // Slightly more buffer
     }
 
+    animateMyPick(source, pickedCard, currentHand = []) {
+        const animationLayer = document.getElementById('animation-layer');
+        const handContainer = document.getElementById('hand-container');
+        if (!animationLayer || !handContainer) return;
+
+        const sourceEl = document.getElementById(source === 'draw' ? 'draw-pile' : 'discard-pile');
+        if (!sourceEl) return;
+
+        const sourceRect = sourceEl.getBoundingClientRect();
+
+        // Calculate target location in player's hand container
+        const tempHand = [...currentHand, pickedCard];
+        const sortedTemp = tempHand.map((card, idx) => ({ card, idx })).sort((a, b) => a.card.v - b.card.v);
+        const targetIndex = sortedTemp.findIndex(item => item.card === pickedCard);
+
+        const handRect = handContainer.getBoundingClientRect();
+        const totalCards = tempHand.length;
+        const cardSpacing = 40;
+        const centerX = handRect.left + handRect.width / 2;
+        const startLeft = centerX - (totalCards * cardSpacing) / 2;
+
+        const idxPos = targetIndex >= 0 ? targetIndex : totalCards - 1;
+        const targetLeft = Math.max(handRect.left, Math.min(handRect.right - 70, startLeft + idxPos * cardSpacing));
+        const targetTop = handRect.top + 5;
+        const targetWidth = 70;
+        const targetHeight = 98;
+
+        // Center card start position inside source pile rect
+        const sourceLeft = sourceRect.left + (sourceRect.width - targetWidth) / 2;
+        const sourceTop = sourceRect.top + (sourceRect.height - targetHeight) / 2;
+
+        const { display, color } = this._getCardDisplay(pickedCard);
+        const isJoker = pickedCard.s === 'Joker';
+        const cardInnerHtml = `<div class="card-corner">${display}<br>${isJoker ? '' : pickedCard.s}</div>` +
+                              `<div class="card-center">${isJoker ? 'JOKER' : pickedCard.s}</div>` +
+                              `<div class="card-corner bottom">${display}<br>${isJoker ? '' : pickedCard.s}</div>`;
+
+        if (source === 'draw') {
+            // 3D Flip Animation (Deck Pick)
+            const flipContainer = document.createElement('div');
+            flipContainer.className = 'flip-card';
+            flipContainer.style.left = `${sourceLeft}px`;
+            flipContainer.style.top = `${sourceTop}px`;
+            flipContainer.style.width = `${targetWidth}px`;
+            flipContainer.style.height = `${targetHeight}px`;
+            flipContainer.style.transition = 'left 0.6s cubic-bezier(0.25, 1, 0.5, 1), top 0.6s cubic-bezier(0.25, 1, 0.5, 1)';
+
+            flipContainer.innerHTML = `
+                <div class="flip-card-inner">
+                    <div class="flip-card-back card card-back"></div>
+                    <div class="flip-card-front card ${color} ${isJoker ? 'joker' : ''}">${cardInnerHtml}</div>
+                </div>
+            `;
+
+            animationLayer.appendChild(flipContainer);
+
+            requestAnimationFrame(() => {
+                flipContainer.classList.add('flipped');
+                flipContainer.style.left = `${targetLeft}px`;
+                flipContainer.style.top = `${targetTop}px`;
+            });
+
+            setTimeout(() => {
+                if (animationLayer.contains(flipContainer)) {
+                    animationLayer.removeChild(flipContainer);
+                }
+                this._finishLocalPickAnimation();
+            }, 620);
+        } else {
+            // Smooth Slide Animation (Tray Pick)
+            const slideCard = document.createElement('div');
+            slideCard.className = `card ${color} ${isJoker ? 'joker' : ''}`;
+            slideCard.style.position = 'fixed';
+            slideCard.style.margin = '0';
+            slideCard.style.left = `${sourceLeft}px`;
+            slideCard.style.top = `${sourceTop}px`;
+            slideCard.style.width = `${targetWidth}px`;
+            slideCard.style.height = `${targetHeight}px`;
+            slideCard.style.zIndex = '200';
+            slideCard.style.transition = 'all 0.55s cubic-bezier(0.25, 1, 0.5, 1)';
+            slideCard.innerHTML = cardInnerHtml;
+
+            animationLayer.appendChild(slideCard);
+
+            requestAnimationFrame(() => {
+                slideCard.style.left = `${targetLeft}px`;
+                slideCard.style.top = `${targetTop}px`;
+            });
+
+            setTimeout(() => {
+                if (animationLayer.contains(slideCard)) {
+                    animationLayer.removeChild(slideCard);
+                }
+                this._finishLocalPickAnimation();
+            }, 570);
+        }
+    }
+
+    _finishLocalPickAnimation() {
+        this.pendingLocalPickAnim = null;
+        const handContainer = document.getElementById('hand-container');
+        if (handContainer) {
+            const hiddenCards = handContainer.querySelectorAll('.pending-pick-card');
+            hiddenCards.forEach(cDiv => {
+                cDiv.classList.remove('pending-pick-card');
+                cDiv.style.opacity = '1';
+                cDiv.classList.add('card-landing');
+                setTimeout(() => cDiv.classList.remove('card-landing'), 400);
+            });
+        }
+    }
+
+    animateDiscard(playerId, discardedCards = []) {
+        const animationLayer = document.getElementById('animation-layer');
+        const discardPileEl = document.getElementById('discard-pile');
+        if (!animationLayer || !discardPileEl || !discardedCards.length) return;
+
+        const targetRect = discardPileEl.getBoundingClientRect();
+        const cardWidth = 70;
+        const cardHeight = 98;
+        const targetLeft = targetRect.left + (targetRect.width - cardWidth) / 2;
+        const targetTop = targetRect.top + (targetRect.height - cardHeight) / 2;
+
+        let sourceLeft = 0;
+        let sourceTop = 0;
+
+        const isLocalUser = playerId === this.myId;
+        if (isLocalUser) {
+            const handContainer = document.getElementById('hand-container');
+            if (handContainer) {
+                const handRect = handContainer.getBoundingClientRect();
+                sourceLeft = handRect.left + handRect.width / 2 - cardWidth / 2;
+                sourceTop = handRect.top;
+            }
+        } else {
+            const opponentEl = document.querySelector(`.opponent[data-pid="${playerId}"]`);
+            if (opponentEl) {
+                const oppRect = opponentEl.getBoundingClientRect();
+                sourceLeft = oppRect.left + oppRect.width / 2 - cardWidth / 2;
+                sourceTop = oppRect.top + oppRect.height / 2 - cardHeight / 2;
+            } else {
+                sourceLeft = window.innerWidth / 2 - cardWidth / 2;
+                sourceTop = 50;
+            }
+        }
+
+        discardedCards.forEach((card, i) => {
+            const { display, color } = this._getCardDisplay(card);
+            const isJoker = card.s === 'Joker';
+            const slideCard = document.createElement('div');
+            slideCard.className = `card ${color} ${isJoker ? 'joker' : ''}`;
+            slideCard.style.position = 'fixed';
+            slideCard.style.margin = '0';
+            slideCard.style.left = `${sourceLeft}px`;
+            slideCard.style.top = `${sourceTop}px`;
+            slideCard.style.width = `${cardWidth}px`;
+            slideCard.style.height = `${cardHeight}px`;
+            slideCard.style.zIndex = `${200 + i}`;
+            slideCard.style.transition = 'all 0.55s cubic-bezier(0.25, 1, 0.5, 1)';
+            slideCard.innerHTML = `<div class="card-corner">${display}<br>${isJoker ? '' : card.s}</div>` +
+                                  `<div class="card-center">${isJoker ? 'JOKER' : card.s}</div>` +
+                                  `<div class="card-corner bottom">${display}<br>${isJoker ? '' : card.s}</div>`;
+
+            animationLayer.appendChild(slideCard);
+
+            setTimeout(() => {
+                requestAnimationFrame(() => {
+                    slideCard.style.left = `${targetLeft}px`;
+                    slideCard.style.top = `${targetTop}px`;
+                    const randomRot = (Math.random() * 12 - 6).toFixed(1);
+                    slideCard.style.transform = `rotate(${randomRot}deg)`;
+                });
+            }, i * 60);
+
+            setTimeout(() => {
+                if (animationLayer.contains(slideCard)) {
+                    animationLayer.removeChild(slideCard);
+                }
+                if (i === discardedCards.length - 1) {
+                    const topCardEl = document.getElementById('top-card');
+                    if (topCardEl && discardedCards.length >= 3) {
+                        topCardEl.classList.add('smash-effect');
+                        this._createDustParticles();
+                        setTimeout(() => topCardEl.classList.remove('smash-effect'), 500);
+                    }
+                }
+            }, 570 + i * 60);
+        });
+    }
+
     // --- UI RENDERING ---
 
     render(gameData) {
@@ -994,8 +1198,9 @@ class PointGame {
                 }
 
                 // Show previous card ONLY if flag is set (after discard, not after pick from tray)
-                if (gameData.showPreviousCard && tray.length >= 2) {
-                    const prevIndex = isMyPickPhase && eligibleIndex > -1 ? eligibleIndex - 1 : tray.length - 2;
+                const lastDiscardCount = gameData.lastDiscardCount || 1;
+                if (gameData.showPreviousCard && tray.length >= (1 + lastDiscardCount)) {
+                    const prevIndex = isMyPickPhase && eligibleIndex > -1 ? eligibleIndex - lastDiscardCount : tray.length - 1 - lastDiscardCount;
                     const prevCard = tray[prevIndex];
                     if (prevCard && previousCardEl) {
                         const prevDisplay = this._getCardDisplay(prevCard);
@@ -1011,7 +1216,6 @@ class PointGame {
                 }
 
                 // Show card count badge if multiple cards discarded
-                const lastDiscardCount = gameData.lastDiscardCount || 0;
                 if (lastDiscardCount > 1 && countBadge) {
                     countBadge.textContent = `x${lastDiscardCount}`;
                     countBadge.style.display = 'block';
@@ -1036,6 +1240,8 @@ class PointGame {
 
             // Improved card rendering with stable index mapping
             const mappedHand = myHand.map((card, originalIndex) => ({ card, originalIndex }));
+            let pendingCardHidden = false;
+
             mappedHand.sort((a, b) => a.card.v - b.card.v).forEach(({ card, originalIndex }) => {
                 const { display, color } = this._getCardDisplay(card);
                 const isJoker = card.s === 'Joker';
@@ -1043,6 +1249,18 @@ class PointGame {
                 cDiv.className = `card ${color} ${isJoker ? 'joker' : ''}`;
                 cDiv.dataset.index = originalIndex;
                 cDiv.innerHTML = `<div class="card-corner">${display}<br>${isJoker ? '' : card.s}</div><div class="card-center">${isJoker ? 'JOKER' : card.s}</div><div class="card-corner bottom">${display}<br>${isJoker ? '' : card.s}</div>`;
+
+                if (
+                    this.pendingLocalPickAnim &&
+                    !pendingCardHidden &&
+                    this.pendingLocalPickAnim.card.v === card.v &&
+                    this.pendingLocalPickAnim.card.s === card.s
+                ) {
+                    cDiv.style.opacity = '0';
+                    cDiv.classList.add('pending-pick-card');
+                    pendingCardHidden = true;
+                }
+
                 cDiv.onclick = () => {
                     if (isMyTurn && turnPhase === 'discard') {
                         this._toggleCardSelect(originalIndex, myHand);
