@@ -111,7 +111,8 @@
             <h2 style="text-align:center;">Scoreboard</h2>
             <p id="round-end-message" style="text-align:center; font-weight:bold;"></p>
             <table id="score-table"></table>
-            <div style="margin-top:20px; text-align:center;">
+            <div style="margin-top:20px; text-align:center; display:flex; justify-content:center; gap:10px;">
+                <button id="btn-next-round-now" onclick="app.startNextRoundNow()" class="accent" style="display:none;">Start Next Round Now</button>
                 <button onclick="app.closeScoreboard()" id="close-scoreboard-btn">Close</button>
             </div>
         </div>

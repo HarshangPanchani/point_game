@@ -37,6 +37,7 @@ class PointGame {
         this.selectedCardIndices = [];
         this.lastGameState = {}; // For detecting changes to animate
         this.pendingLocalPickAnim = null; // Lock for local player pick animation
+        this.roundCountdownInterval = null; // Countdown timer for 60s round break
         this.hostMigrationRef = null;
         this.hostAutoMigrationTimer = null;
         this.hostHeartbeatInterval = null;
@@ -378,6 +379,18 @@ class PointGame {
         }
 
         // --- LIVE UI UPDATES (Stay Sync'd) ---
+        if (gameData.status === 'round_over' && gameData.roundEndTime) {
+            if (!this.lastGameState || this.lastGameState.status !== 'round_over') {
+                document.getElementById('scoreboard-screen').classList.add('active-screen');
+            }
+            this._updateRoundCountdown(gameData);
+        } else {
+            if (this.roundCountdownInterval) {
+                clearInterval(this.roundCountdownInterval);
+                this.roundCountdownInterval = null;
+            }
+        }
+
         // If the player list is currently open, we must re-render it to reflect changes (Spectator/Active buttons)
         const playerListScreen = document.getElementById('player-list-screen');
         if (playerListScreen && playerListScreen.classList.contains('active-screen')) {
@@ -693,7 +706,8 @@ class PointGame {
 
         const updates = {
             status: 'round_over',
-            showInitiatedBy: null
+            showInitiatedBy: null,
+            roundEndTime: Date.now() + 60000
         };
         const roundScores = {};
         let message = "";
@@ -727,16 +741,62 @@ class PointGame {
         updates[`scores/${gameData.currentRound}`] = roundScores;
         updates.roundEndMessage = message;
         await update(this.gameRef, updates);
-
-        setTimeout(async () => {
-            if (this.isHost) {
-                await this.startNewRound(gameData.currentRound + 1);
-            }
-        }, 15000);
     }
 
     showScoreboard() { document.getElementById('scoreboard-screen').classList.add('active-screen'); }
     closeScoreboard() { document.getElementById('scoreboard-screen').classList.remove('active-screen'); }
+
+    _updateRoundCountdown(gameData) {
+        const tick = () => {
+            if (!this.lastGameState || this.lastGameState.status !== 'round_over' || !this.lastGameState.roundEndTime) {
+                if (this.roundCountdownInterval) {
+                    clearInterval(this.roundCountdownInterval);
+                    this.roundCountdownInterval = null;
+                }
+                return;
+            }
+
+            const now = Date.now();
+            const remainingSec = Math.max(0, Math.ceil((this.lastGameState.roundEndTime - now) / 1000));
+            const roundIndicator = document.getElementById('round-indicator');
+            const roundMsg = document.getElementById('round-end-message');
+            const btnNextRound = document.getElementById('btn-next-round-now');
+
+            if (roundIndicator) {
+                roundIndicator.innerText = `Next Round: ${remainingSec}s`;
+            }
+            if (roundMsg) {
+                const baseMsg = this.lastGameState.roundEndMessage || "Round Over!";
+                roundMsg.innerText = `${baseMsg} (Next round in ${remainingSec}s)`;
+            }
+            if (btnNextRound) {
+                btnNextRound.style.display = this.isHost ? 'inline-block' : 'none';
+            }
+
+            if (this.isHost && remainingSec <= 0) {
+                if (this.roundCountdownInterval) {
+                    clearInterval(this.roundCountdownInterval);
+                    this.roundCountdownInterval = null;
+                }
+                this.startNextRoundNow();
+            }
+        };
+
+        tick();
+        if (!this.roundCountdownInterval) {
+            this.roundCountdownInterval = setInterval(tick, 1000);
+        }
+    }
+
+    async startNextRoundNow() {
+        if (!this.isHost) return;
+        if (this.roundCountdownInterval) {
+            clearInterval(this.roundCountdownInterval);
+            this.roundCountdownInterval = null;
+        }
+        const currentRound = (this.lastGameState && this.lastGameState.currentRound) || 1;
+        await this.startNewRound(currentRound + 1);
+    }
     // --- ADD THESE TWO NEW FUNCTIONS ---
     showHowToPlay() { document.getElementById('how-to-play-screen').classList.add('active-screen'); }
     closeHowToPlay() { document.getElementById('how-to-play-screen').classList.remove('active-screen'); }
@@ -1153,7 +1213,7 @@ class PointGame {
             document.getElementById('turn-indicator').innerText = isMyTurn ? `YOUR TURN (${turnPhase.toUpperCase()})` : `${currentPlayer.name}'s Turn`;
 
             // Opponents
-            this.renderOpponents(players, currentPlayerId);
+            this.renderOpponents(players, currentPlayerId, status === 'round_over');
 
             // Decks
             const drawPileEl = document.getElementById('draw-pile');
@@ -1310,7 +1370,6 @@ class PointGame {
 
             if (status === 'round_over') {
                 this.renderScoreboard(gameData);
-                document.getElementById('scoreboard-screen').classList.add('active-screen');
                 document.getElementById('round-end-message').innerText = gameData.roundEndMessage || "Round Over!";
             }
         }
@@ -1373,7 +1432,7 @@ class PointGame {
         tfoot.innerHTML = footerRow;
         table.appendChild(tfoot);
     }
-    renderOpponents(players, currentPlayerId) {
+    renderOpponents(players, currentPlayerId, isRoundOver = false) {
         const oppContainer = document.getElementById('opponents-container');
         oppContainer.innerHTML = '';
         const playerIds = Object.keys(players).filter(pid => players[pid]).sort();
@@ -1419,7 +1478,18 @@ class PointGame {
             div.style.left = x + 'px';
             div.style.top = y + 'px';
             div.style.transform = 'translate(-50%, -50%)';
-            div.innerHTML = `<div>${p.name}</div><div class="card-icon">🂠 ${(p.hand || []).length}</div>`;
+
+            if (isRoundOver) {
+                const handSum = this._calculateHandSum(p.hand);
+                const cardsHtml = (p.hand || []).map(card => {
+                    const { display, color } = this._getCardDisplay(card);
+                    const isJoker = card.s === 'Joker';
+                    return `<span class="mini-card ${color}">${display}${isJoker ? '' : card.s}</span>`;
+                }).join('');
+                div.innerHTML = `<div>${p.name} (${handSum} pts)</div><div class="revealed-hand">${cardsHtml}</div>`;
+            } else {
+                div.innerHTML = `<div>${p.name}</div><div class="card-icon">🂠 ${(p.hand || []).length}</div>`;
+            }
 
             oppContainer.appendChild(div);
         });
