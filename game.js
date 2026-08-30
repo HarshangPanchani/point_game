@@ -38,6 +38,16 @@ class PointGame {
         this.lastGameState = {}; // For detecting changes to animate
         this.pendingLocalPickAnim = null; // Lock for local player pick animation
         this.roundCountdownInterval = null; // Countdown timer for 60s round break
+
+        // --- WebRTC Media Properties ---
+        this.peer = null;
+        this.localMediaStream = null;
+        this.voiceConnections = {}; // Stores active calls { peerId: call }
+        this.remoteStreams = {}; // Stores remote streams { peerId: stream }
+        this.isMuted = true; // OFF by default
+        this.isVideoOff = true; // OFF by default
+        this.facingMode = 'user'; // 'user' (front) or 'environment' (back)
+
         this.hostMigrationRef = null;
         this.hostAutoMigrationTimer = null;
         this.hostHeartbeatInterval = null;
@@ -98,6 +108,7 @@ class PointGame {
         };
 
         await set(this.gameRef, initialGameState);
+        this.initWebRTC();
         this.listenForGameUpdates();
     }
 
@@ -131,8 +142,9 @@ class PointGame {
             }
 
             await update(this.gameRef, updates);
+            this.initWebRTC();
             this.listenForGameUpdates();
-        } catch (error) {
+        } catch (err) {
             console.error('Join lobby error:', error);
             this.showToast("Network error. Please check your connection.");
         }
@@ -376,6 +388,16 @@ class PointGame {
                     }
                 }
             }
+        }
+
+        // WebRTC P2P Mesh Connections
+        if (this.peer && gameData.players) {
+            Object.entries(gameData.players).forEach(([pid, p]) => {
+                if (pid !== this.myId && p.peerId && !this.voiceConnections[p.peerId]) {
+                    const call = this.peer.call(p.peerId, this.localMediaStream);
+                    if (call) this.setupCallEvents(call);
+                }
+            });
         }
 
         // --- LIVE UI UPDATES (Stay Sync'd) ---
@@ -788,18 +810,256 @@ class PointGame {
         }
     }
 
-    async startNextRoundNow() {
-        if (!this.isHost) return;
-        if (this.roundCountdownInterval) {
-            clearInterval(this.roundCountdownInterval);
-            this.roundCountdownInterval = null;
+    // --- WEBRTC LIVE VIDEO & AUDIO CHAT ---
+
+    async initWebRTC() {
+        if (this.peer) return;
+
+        // Check for multiple camera devices (e.g. mobile front/back camera)
+        if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(d => d.kind === 'videoinput');
+                if (videoDevices.length > 1) {
+                    const flipLobby = document.getElementById('btn-flip-lobby');
+                    const flipGame = document.getElementById('btn-flip-game');
+                    if (flipLobby) flipLobby.style.display = 'inline-block';
+                    if (flipGame) flipGame.style.display = 'inline-block';
+                }
+            } catch (e) {
+                console.warn("Could not enumerate media devices:", e);
+            }
         }
-        const currentRound = (this.lastGameState && this.lastGameState.currentRound) || 1;
-        await this.startNewRound(currentRound + 1);
+
+        this._ensureLocalStream();
+
+        this.peer = new Peer({
+            config: {
+                'iceServers': [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:stun1.l.google.com:19302' },
+                    { urls: 'stun:stun2.l.google.com:19302' }
+                ]
+            }
+        });
+
+        this.peer.on('open', (peerId) => {
+            if (this.gameRef && this.myId) {
+                update(ref(db, `games/${this.gameCode}/players/${this.myId}`), {
+                    peerId: peerId
+                });
+            }
+        });
+
+        this.peer.on('call', (call) => {
+            call.answer(this.localMediaStream);
+            this.setupCallEvents(call);
+        });
+
+        this.peer.on('error', (err) => {
+            console.warn("PeerJS error:", err);
+        });
+
+        this._updateMediaButtonStates();
     }
-    // --- ADD THESE TWO NEW FUNCTIONS ---
-    showHowToPlay() { document.getElementById('how-to-play-screen').classList.add('active-screen'); }
-    closeHowToPlay() { document.getElementById('how-to-play-screen').classList.remove('active-screen'); }
+
+    _ensureLocalStream() {
+        if (!this.localMediaStream) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 320;
+            canvas.height = 240;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#111';
+            ctx.fillRect(0, 0, 320, 240);
+
+            const dummyVideoTrack = canvas.captureStream(10).getVideoTracks()[0];
+            dummyVideoTrack.enabled = false;
+
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const osc = audioCtx.createOscillator();
+            const dst = audioCtx.createMediaStreamDestination();
+            osc.connect(dst);
+            osc.start();
+            const dummyAudioTrack = dst.stream.getAudioTracks()[0];
+            dummyAudioTrack.enabled = false;
+
+            this.localMediaStream = new MediaStream([dummyAudioTrack, dummyVideoTrack]);
+        }
+    }
+
+    async toggleMic() {
+        if (this.isMuted) {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                const newAudioTrack = stream.getAudioTracks()[0];
+                newAudioTrack.enabled = true;
+
+                const oldAudioTracks = this.localMediaStream.getAudioTracks();
+                oldAudioTracks.forEach(t => { t.stop(); this.localMediaStream.removeTrack(t); });
+                this.localMediaStream.addTrack(newAudioTrack);
+
+                Object.values(this.voiceConnections).forEach(call => {
+                    const sender = call.peerConnection?.getSenders().find(s => s.track?.kind === 'audio');
+                    if (sender) sender.replaceTrack(newAudioTrack);
+                });
+
+                this.isMuted = false;
+                this.showToast("Microphone ON");
+            } catch (err) {
+                console.error("Microphone access denied:", err);
+                this.showToast("Microphone permission required.");
+                return;
+            }
+        } else {
+            this.isMuted = true;
+            this.localMediaStream.getAudioTracks().forEach(t => t.enabled = false);
+            this.showToast("Microphone OFF");
+        }
+
+        this._updateMediaButtonStates();
+    }
+
+    async toggleVideo() {
+        const selfBox = document.getElementById('self-video-box');
+        const selfVideoEl = document.getElementById('self-video-el');
+
+        if (this.isVideoOff) {
+            try {
+                const constraints = {
+                    video: {
+                        facingMode: this.facingMode,
+                        width: { ideal: 320 },
+                        height: { ideal: 240 }
+                    },
+                    audio: false
+                };
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                const newVideoTrack = stream.getVideoTracks()[0];
+                newVideoTrack.enabled = true;
+
+                const oldVideoTracks = this.localMediaStream.getVideoTracks();
+                oldVideoTracks.forEach(t => { t.stop(); this.localMediaStream.removeTrack(t); });
+                this.localMediaStream.addTrack(newVideoTrack);
+
+                Object.values(this.voiceConnections).forEach(call => {
+                    const sender = call.peerConnection?.getSenders().find(s => s.track?.kind === 'video');
+                    if (sender) sender.replaceTrack(newVideoTrack);
+                });
+
+                this.isVideoOff = false;
+                if (selfVideoEl) selfVideoEl.srcObject = this.localMediaStream;
+                if (selfBox) selfBox.style.display = 'block';
+                this.showToast("Camera ON");
+            } catch (err) {
+                console.error("Camera access denied:", err);
+                this.showToast("Camera permission required.");
+                return;
+            }
+        } else {
+            this.isVideoOff = true;
+            this.localMediaStream.getVideoTracks().forEach(t => t.enabled = false);
+            if (selfBox) selfBox.style.display = 'none';
+            this.showToast("Camera OFF");
+        }
+
+        this._updateMediaButtonStates();
+    }
+
+    async switchCamera() {
+        if (this.isVideoOff) return this.showToast("Turn camera ON first to switch.");
+
+        this.facingMode = this.facingMode === 'user' ? 'environment' : 'user';
+        const selfVideoEl = document.getElementById('self-video-el');
+
+        try {
+            const constraints = {
+                video: {
+                    facingMode: this.facingMode,
+                    width: { ideal: 320 },
+                    height: { ideal: 240 }
+                },
+                audio: false
+            };
+            const stream = await navigator.mediaDevices.getUserMedia(constraints);
+            const newVideoTrack = stream.getVideoTracks()[0];
+            newVideoTrack.enabled = true;
+
+            const oldVideoTracks = this.localMediaStream.getVideoTracks();
+            oldVideoTracks.forEach(t => { t.stop(); this.localMediaStream.removeTrack(t); });
+            this.localMediaStream.addTrack(newVideoTrack);
+
+            Object.values(this.voiceConnections).forEach(call => {
+                const sender = call.peerConnection?.getSenders().find(s => s.track?.kind === 'video');
+                if (sender) sender.replaceTrack(newVideoTrack);
+            });
+
+            if (selfVideoEl) {
+                selfVideoEl.srcObject = this.localMediaStream;
+                selfVideoEl.style.transform = this.facingMode === 'user' ? 'scaleX(-1)' : 'none';
+            }
+
+            this.showToast(`Switched to ${this.facingMode === 'user' ? 'Front' : 'Back'} Camera`);
+        } catch (err) {
+            console.error("Error switching camera:", err);
+            this.showToast("Could not switch camera.");
+        }
+    }
+
+    _updateMediaButtonStates() {
+        const micLobby = document.getElementById('btn-mic-lobby');
+        const micGame = document.getElementById('btn-mic-game');
+        const camLobby = document.getElementById('btn-cam-lobby');
+        const camGame = document.getElementById('btn-cam-game');
+
+        const micText = this.isMuted ? '🎤 Mic Off' : '🎙️ Mic On';
+        const camText = this.isVideoOff ? '📹 Cam Off' : '🎥 Cam On';
+
+        [micLobby, micGame].forEach(b => {
+            if (b) {
+                b.textContent = micText;
+                b.className = `media-btn ${this.isMuted ? 'danger' : 'accent'}`;
+            }
+        });
+
+        [camLobby, camGame].forEach(b => {
+            if (b) {
+                b.textContent = camText;
+                b.className = `media-btn ${this.isVideoOff ? 'danger' : 'accent'}`;
+            }
+        });
+    }
+
+    setupCallEvents(call) {
+        call.on('stream', (remoteStream) => {
+            this.remoteStreams[call.peer] = remoteStream;
+
+            let audioEl = document.getElementById(`audio-${call.peer}`);
+            if (!audioEl) {
+                audioEl = document.createElement('audio');
+                audioEl.id = `audio-${call.peer}`;
+                audioEl.autoplay = true;
+                const audioContainer = document.getElementById('audio-container');
+                if (audioContainer) audioContainer.appendChild(audioEl);
+            }
+            audioEl.srcObject = remoteStream;
+
+            if (this.lastGameState) {
+                this.render(this.lastGameState);
+            }
+        });
+
+        const cleanup = () => {
+            const audioEl = document.getElementById(`audio-${call.peer}`);
+            if (audioEl) audioEl.remove();
+            delete this.voiceConnections[call.peer];
+            delete this.remoteStreams[call.peer];
+        };
+
+        call.on('close', cleanup);
+        call.on('error', cleanup);
+
+        this.voiceConnections[call.peer] = call;
+    }
     // --- CARD & DECK LOGIC (PRIVATE) ---
 
     showPlayerList() {
@@ -1179,7 +1439,11 @@ class PointGame {
             list.innerHTML = '';
             Object.entries(players || {}).sort((a, b) => a[0].localeCompare(b[0])).forEach(([pid, p]) => {
                 let li = document.createElement('li');
-                li.innerHTML = `<span>${p.name} ${pid === hostId ? '👑' : ''}</span>`;
+                let videoBox = '';
+                if (pid !== this.myId && p.peerId && this.remoteStreams[p.peerId]) {
+                    videoBox = `<div class="lobby-player-video-box"><video id="lobby-vid-${p.peerId}" autoplay playsinline class="lobby-player-video"></video></div>`;
+                }
+                li.innerHTML = `<div style="display:flex; align-items:center;">${videoBox}<span>${p.name} ${pid === hostId ? '👑' : ''}</span></div>`;
                 if (this.isHost && pid !== this.myId) {
                     let kickBtn = document.createElement('button');
                     kickBtn.innerText = 'Kick';
@@ -1189,6 +1453,13 @@ class PointGame {
                     li.appendChild(kickBtn);
                 }
                 list.appendChild(li);
+
+                if (pid !== this.myId && p.peerId && this.remoteStreams[p.peerId]) {
+                    const vEl = li.querySelector(`#lobby-vid-${p.peerId}`);
+                    if (vEl && vEl.srcObject !== this.remoteStreams[p.peerId]) {
+                        vEl.srcObject = this.remoteStreams[p.peerId];
+                    }
+                }
             });
         } else if (status === 'playing' || status === 'round_over') { // NOTE: 'calculating_scores' is removed from here.
             if (!this.lastGameState || (this.lastGameState.status !== 'playing' && this.lastGameState.status !== 'round_over')) {
@@ -1479,6 +1750,11 @@ class PointGame {
             div.style.top = y + 'px';
             div.style.transform = 'translate(-50%, -50%)';
 
+            let videoHtml = '';
+            if (p.peerId && this.remoteStreams[p.peerId]) {
+                videoHtml = `<div class="opponent-video-container"><video id="opp-vid-${p.peerId}" autoplay playsinline class="opponent-video"></video></div>`;
+            }
+
             if (isRoundOver) {
                 const handSum = this._calculateHandSum(p.hand);
                 const cardsHtml = (p.hand || []).map(card => {
@@ -1486,12 +1762,19 @@ class PointGame {
                     const isJoker = card.s === 'Joker';
                     return `<span class="mini-card ${color}">${display}${isJoker ? '' : card.s}</span>`;
                 }).join('');
-                div.innerHTML = `<div>${p.name} (${handSum} pts)</div><div class="revealed-hand">${cardsHtml}</div>`;
+                div.innerHTML = `<div>${p.name} (${handSum} pts)</div>${videoHtml}<div class="revealed-hand">${cardsHtml}</div>`;
             } else {
-                div.innerHTML = `<div>${p.name}</div><div class="card-icon">🂠 ${(p.hand || []).length}</div>`;
+                div.innerHTML = `<div>${p.name}</div>${videoHtml}<div class="card-icon">🂠 ${(p.hand || []).length}</div>`;
             }
 
             oppContainer.appendChild(div);
+
+            if (p.peerId && this.remoteStreams[p.peerId]) {
+                const vEl = div.querySelector(`#opp-vid-${p.peerId}`);
+                if (vEl && vEl.srcObject !== this.remoteStreams[p.peerId]) {
+                    vEl.srcObject = this.remoteStreams[p.peerId];
+                }
+            }
         });
     }
 }

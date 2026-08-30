@@ -863,4 +863,52 @@ tfoot td {
     color: #111;
 }
 
+/* WebRTC Video & Audio Controls & Feed Styles */
+.media-btn {
+    font-size: 13px !important;
+    padding: 8px 14px !important;
+    margin: 4px !important;
+    border-radius: 20px !important;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.4) !important;
+}
+
+.opponent-video-container {
+    width: 54px;
+    height: 54px;
+    border-radius: 50%;
+    overflow: hidden;
+    margin: 4px auto;
+    border: 2px solid var(--accent);
+    background: #000;
+    position: relative;
+}
+
+.opponent-video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.lobby-player-video-box {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    overflow: hidden;
+    border: 2px solid var(--accent);
+    background: #111;
+    display: inline-block;
+    vertical-align: middle;
+    margin-right: 8px;
+}
+
+.lobby-player-video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+
 

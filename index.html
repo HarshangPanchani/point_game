@@ -10,6 +10,9 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Playfair+Display:ital,wght@0,700;1,700&display=swap" rel="stylesheet">
     
+    <!-- PeerJS Library for P2P WebRTC Video & Audio -->
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    
     <!-- Firebase SDK -->
     <script type="module" src="game.js"></script>
     <link rel="stylesheet" href="style.css">
@@ -54,6 +57,11 @@
                 <button id="start-game-btn" style="display:none" onclick="app.startGame()" class="accent">Start
                     Game</button>
             </div>
+            <div id="media-controls-lobby" style="margin-top: 15px; text-align: center; display: flex; justify-content: center; gap: 8px; flex-wrap: wrap;">
+                <button id="btn-mic-lobby" onclick="app.toggleMic()" class="media-btn danger">🎤 Mic Off</button>
+                <button id="btn-cam-lobby" onclick="app.toggleVideo()" class="media-btn danger">📹 Cam Off</button>
+                <button id="btn-flip-lobby" onclick="app.switchCamera()" class="media-btn accent" style="display:none;">🔄 Flip Cam</button>
+            </div>
             <p id="waiting-text" style="text-align:center; font-style:italic;">Waiting for host to start...</p>
         </div>
     </div>
@@ -88,6 +96,9 @@
                     </div>
                     <div id="card-count-badge" style="display:none;"></div>
                 </div>
+                <div id="self-video-box" style="display:none; position:absolute; bottom:10px; right:10px; width:100px; height:80px; border-radius:10px; overflow:hidden; border:2px solid #FFD700; z-index:30; background:#000;">
+                    <video id="self-video-el" autoplay muted playsinline style="width:100%; height:100%; object-fit:cover; transform:scaleX(-1);"></video>
+                </div>
             </div>
 
             <div id="player-area">
@@ -99,6 +110,9 @@
                     <button id="btn-scoreboard" onclick="app.showScoreboard()">SCORE</button>
                     <button id="btn-players" onclick="app.showPlayerList()">PLAYERS</button>
                     <button id="btn-how-to-play" onclick="app.showHowToPlay()">HOW TO PLAY</button>
+                    <button id="btn-mic-game" onclick="app.toggleMic()" class="media-btn danger">🎤 Mic Off</button>
+                    <button id="btn-cam-game" onclick="app.toggleVideo()" class="media-btn danger">📹 Cam Off</button>
+                    <button id="btn-flip-game" onclick="app.switchCamera()" class="media-btn accent" style="display:none;">🔄 Flip Cam</button>
                     <button id="btn-fullscreen" onclick="app.toggleFullscreen()">FULLSCREEN</button>
                 </div>
             </div>
@@ -211,6 +225,7 @@
 
     <div id="toast">Message</div>
     <div id="animation-layer"></div>
+    <div id="audio-container" style="display:none;"></div>
 
     
 </body>
