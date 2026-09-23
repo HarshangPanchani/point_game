@@ -8,11 +8,13 @@
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Playfair+Display:ital,wght@0,700;1,700&display=swap" rel="stylesheet">
-    
+    <link
+        href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Playfair+Display:ital,wght@0,700;1,700&display=swap"
+        rel="stylesheet">
+
     <!-- PeerJS Library for P2P WebRTC Video & Audio -->
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-    
+
     <!-- Firebase SDK -->
     <script type="module" src="game.js"></script>
     <link rel="stylesheet" href="style.css">
@@ -53,14 +55,17 @@
             </div>
             <p>Players:</p>
             <ul id="lobby-list"></ul>
-            <div id="lobby-controls" style="text-align:center;">
-                <button id="start-game-btn" style="display:none" onclick="app.startGame()" class="accent">Start
-                    Game</button>
+            <div id="lobby-controls" style="text-align:center; display: flex; justify-content: center; gap: 8px; flex-wrap: wrap;">
+                <button id="add-bot-btn" style="display:none" onclick="app.addBot()" class="bot-btn">🤖 Add Bot</button>
+                <button id="start-game-btn" style="display:none" onclick="app.startGame()" class="accent">Start Game</button>
+                <button id="leave-lobby-btn" onclick="app.leaveGame(true)" class="danger">🚪 Leave Lobby</button>
             </div>
-            <div id="media-controls-lobby" style="margin-top: 15px; text-align: center; display: flex; justify-content: center; gap: 8px; flex-wrap: wrap;">
+            <div id="media-controls-lobby"
+                style="margin-top: 15px; text-align: center; display: flex; justify-content: center; gap: 8px; flex-wrap: wrap;">
                 <button id="btn-mic-lobby" onclick="app.toggleMic()" class="media-btn danger">🎤 Mic Off</button>
                 <button id="btn-cam-lobby" onclick="app.toggleVideo()" class="media-btn danger">📹 Cam Off</button>
-                <button id="btn-flip-lobby" onclick="app.switchCamera()" class="media-btn accent" style="display:none;">🔄 Flip Cam</button>
+                <button id="btn-flip-lobby" onclick="app.switchCamera()" class="media-btn accent"
+                    style="display:none;">🔄 Flip Cam</button>
             </div>
             <p id="waiting-text" style="text-align:center; font-style:italic;">Waiting for host to start...</p>
         </div>
@@ -70,7 +75,10 @@
     <div id="game-screen" class="screen">
         <div id="game-ui">
             <div id="top-bar">
-                <span>Room: <span id="game-room-id"></span></span>
+                <div class="top-bar-left">
+                    <span>Room: <span id="game-room-id"></span></span>
+                    <button id="btn-leave-top" onclick="app.leaveGame(false)" class="mini-leave-btn" title="Leave Game">🚪 Leave</button>
+                </div>
                 <span id="round-indicator">Round: 1</span>
                 <span id="turn-indicator">Waiting...</span>
             </div>
@@ -96,8 +104,10 @@
                     </div>
                     <div id="card-count-badge" style="display:none;"></div>
                 </div>
-                <div id="self-video-box" style="display:none; position:absolute; bottom:10px; right:10px; width:100px; height:80px; border-radius:10px; overflow:hidden; border:2px solid #FFD700; z-index:30; background:#000;">
-                    <video id="self-video-el" autoplay muted playsinline style="width:100%; height:100%; object-fit:cover; transform:scaleX(-1);"></video>
+                <div id="self-video-box"
+                    style="display:none; position:absolute; bottom:10px; right:10px; width:100px; height:80px; border-radius:10px; overflow:hidden; border:2px solid #FFD700; z-index:30; background:#000;">
+                    <video id="self-video-el" autoplay muted playsinline
+                        style="width:100%; height:100%; object-fit:cover; transform:scaleX(-1);"></video>
                 </div>
             </div>
 
@@ -107,12 +117,15 @@
                 <div id="controls">
                     <button id="btn-show" onclick="app.actionShow()" class="danger" disabled>SHOW</button>
                     <button id="btn-discard" onclick="app.actionDiscard()" disabled>DISCARD</button>
+                    <button id="btn-skip-round" onclick="app.skipRound()" class="danger" style="display:none;">SKIP ROUND</button>
                     <button id="btn-scoreboard" onclick="app.showScoreboard()">SCORE</button>
                     <button id="btn-players" onclick="app.showPlayerList()">PLAYERS</button>
                     <button id="btn-how-to-play" onclick="app.showHowToPlay()">HOW TO PLAY</button>
+                    <button id="btn-sfx" onclick="app.toggleSFX()" class="media-btn accent">🔊 Sound ON</button>
                     <button id="btn-mic-game" onclick="app.toggleMic()" class="media-btn danger">🎤 Mic Off</button>
                     <button id="btn-cam-game" onclick="app.toggleVideo()" class="media-btn danger">📹 Cam Off</button>
-                    <button id="btn-flip-game" onclick="app.switchCamera()" class="media-btn accent" style="display:none;">🔄 Flip Cam</button>
+                    <button id="btn-flip-game" onclick="app.switchCamera()" class="media-btn accent"
+                        style="display:none;">🔄 Flip Cam</button>
                     <button id="btn-fullscreen" onclick="app.toggleFullscreen()">FULLSCREEN</button>
                 </div>
             </div>
@@ -125,9 +138,11 @@
             <h2 style="text-align:center;">Scoreboard</h2>
             <p id="round-end-message" style="text-align:center; font-weight:bold;"></p>
             <table id="score-table"></table>
-            <div style="margin-top:20px; text-align:center; display:flex; justify-content:center; gap:10px;">
-                <button id="btn-next-round-now" onclick="app.startNextRoundNow()" class="accent" style="display:none;">Start Next Round Now</button>
+            <div style="margin-top:20px; text-align:center; display:flex; justify-content:center; gap:10px; flex-wrap: wrap;">
+                <button id="btn-next-round-now" onclick="app.startNextRoundNow()" class="accent"
+                    style="display:none;">Start Next Round Now</button>
                 <button onclick="app.closeScoreboard()" id="close-scoreboard-btn">Close</button>
+                <button onclick="app.leaveGame(false)" class="danger" id="btn-leave-scoreboard">🚪 Leave Game</button>
             </div>
         </div>
     </div>
@@ -227,7 +242,19 @@
     <div id="animation-layer"></div>
     <div id="audio-container" style="display:none;"></div>
 
-    
+    <!-- 7. Leave Confirmation Modal -->
+    <div id="leave-confirm-modal" class="modal-overlay" style="display:none;">
+        <div class="modal-box">
+            <h2 style="color: var(--danger); margin-top:0; font-family:'Playfair Display', serif;">Leave Game?</h2>
+            <p style="color: #ddd; font-size:15px; margin: 15px 0;">Are you sure you want to leave this game? You can join or create another room anytime.</p>
+            <div style="display:flex; justify-content:center; gap:12px; margin-top:20px;">
+                <button onclick="app.executeLeaveGame(false)" class="danger">Yes, Leave</button>
+                <button onclick="app.cancelLeaveGame()">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+
 </body>
 
-</html> 
+</html>

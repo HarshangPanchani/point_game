@@ -16,6 +16,180 @@ const firebaseConfig = {
 const firebaseApp = initializeApp(firebaseConfig);
 const db = getDatabase(firebaseApp);
 
+// --- WEB AUDIO API SOUND EFFECTS SYNTHESIZER ---
+class SoundEffects {
+    constructor() {
+        this.ctx = null;
+        this.enabled = true;
+    }
+
+    _initCtx() {
+        if (!this.ctx) {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (AudioCtx) {
+                this.ctx = new AudioCtx();
+            }
+        }
+        if (this.ctx && this.ctx.state === 'suspended') {
+            this.ctx.resume();
+        }
+    }
+
+    // 1. Soft Card Pick Swish / Slide Sound
+    playCardPick() {
+        if (!this.enabled) return;
+        this._initCtx();
+        if (!this.ctx) return;
+
+        const now = this.ctx.currentTime;
+        const bufferSize = Math.floor(this.ctx.sampleRate * 0.08);
+        const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+            data[i] = Math.random() * 2 - 1;
+        }
+
+        const noise = this.ctx.createBufferSource();
+        noise.buffer = buffer;
+
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.setValueAtTime(1200, now);
+        filter.frequency.exponentialRampToValueAtTime(300, now + 0.08);
+
+        const gain = this.ctx.createGain();
+        gain.gain.setValueAtTime(0.18, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+
+        noise.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.ctx.destination);
+
+        noise.start(now);
+    }
+
+    // 2. Satisfying Card Snap / Slap Sound
+    playCardSnap() {
+        if (!this.enabled) return;
+        this._initCtx();
+        if (!this.ctx) return;
+
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(180, now);
+        osc.frequency.exponentialRampToValueAtTime(40, now + 0.09);
+
+        gain.gain.setValueAtTime(0.35, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+
+        osc.start(now);
+        osc.stop(now + 0.09);
+
+        const bufferSize = Math.floor(this.ctx.sampleRate * 0.04);
+        const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+            data[i] = Math.random() * 2 - 1;
+        }
+
+        const noise = this.ctx.createBufferSource();
+        noise.buffer = buffer;
+
+        const noiseGain = this.ctx.createGain();
+        noiseGain.gain.setValueAtTime(0.25, now);
+        noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
+
+        noise.connect(noiseGain);
+        noiseGain.connect(this.ctx.destination);
+
+        noise.start(now);
+    }
+
+    // 3. Gentle Double Chime (Your Turn)
+    playYourTurn() {
+        if (!this.enabled) return;
+        this._initCtx();
+        if (!this.ctx) return;
+
+        const now = this.ctx.currentTime;
+        const notes = [659.25, 880.00];
+        notes.forEach((freq, i) => {
+            const time = now + i * 0.12;
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(freq, time);
+
+            gain.gain.setValueAtTime(0.15, time);
+            gain.gain.exponentialRampToValueAtTime(0.001, time + 0.25);
+
+            osc.connect(gain);
+            gain.connect(this.ctx.destination);
+
+            osc.start(time);
+            osc.stop(time + 0.25);
+        });
+    }
+
+    // 4. Show / Victory Fanfare
+    playShowWin() {
+        if (!this.enabled) return;
+        this._initCtx();
+        if (!this.ctx) return;
+
+        const now = this.ctx.currentTime;
+        const chord = [523.25, 659.25, 783.99, 1046.50];
+        chord.forEach((freq, i) => {
+            const time = now + i * 0.10;
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(freq, time);
+
+            gain.gain.setValueAtTime(0.25, time);
+            gain.gain.exponentialRampToValueAtTime(0.001, time + 0.45);
+
+            osc.connect(gain);
+            gain.connect(this.ctx.destination);
+
+            osc.start(time);
+            osc.stop(time + 0.45);
+        });
+    }
+
+    // 5. Button Click Sound
+    playButtonClick() {
+        if (!this.enabled) return;
+        this._initCtx();
+        if (!this.ctx) return;
+
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(400, now);
+        osc.frequency.exponentialRampToValueAtTime(150, now + 0.03);
+
+        gain.gain.setValueAtTime(0.1, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.03);
+
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+
+        osc.start(now);
+        osc.stop(now + 0.03);
+    }
+}
+
 class PointGame {
     constructor() {
         // Persistent user ID ensures same player identity across reloads
@@ -38,6 +212,7 @@ class PointGame {
         this.lastGameState = {}; // For detecting changes to animate
         this.pendingLocalPickAnim = null; // Lock for local player pick animation
         this.roundCountdownInterval = null; // Countdown timer for 60s round break
+        this.sfx = new SoundEffects(); // Web Audio API Sound Synthesizer
 
         // --- WebRTC Media Properties ---
         this.peer = null;
@@ -52,6 +227,18 @@ class PointGame {
         this.hostAutoMigrationTimer = null;
         this.hostHeartbeatInterval = null;
         this.hostOfflineTimeoutMs = 12000; // 12 seconds timeout for host failover (End User optimization)
+
+        // Database listener unsubscribe hook
+        this.unsubscribeGame = null;
+
+        // Bot orchestration properties
+        this.isExecutingBotTurn = false;
+        this.botActionTimeout = null;
+        this.botNamesPool = [
+            "AceBot", "Lucky Luke", "Cyber Queen", "Card Shark",
+            "Neon Nova", "Deep Chip", "Blitz Bot", "Clara Fox",
+            "Royal Flush", "Jack Pot", "Omega Card", "Vegas Vic"
+        ];
     }
 
     // --- LOBBY & CONNECTION ---
@@ -221,17 +408,26 @@ class PointGame {
             });
         }, 5000); // Check every 5 seconds
 
-        onValue(this.gameRef, (snapshot) => {
+        if (this.unsubscribeGame) {
+            try { this.unsubscribeGame(); } catch (e) {}
+            this.unsubscribeGame = null;
+        }
+
+        this.unsubscribeGame = onValue(this.gameRef, (snapshot) => {
             if (!snapshot.exists()) {
-                alert("The game has been ended or the host has left.");
-                location.reload();
+                if (this.gameCode) {
+                    alert("The game has been ended or the host has left.");
+                    this.leaveGame(true);
+                }
                 return;
             }
             const gameData = snapshot.val();
 
             if (gameData.players && !gameData.players[this.myId]) {
-                alert("You have been removed from the game.");
-                location.reload();
+                if (this.gameCode) {
+                    alert("You have been removed from the game.");
+                    this.leaveGame(true);
+                }
                 return;
             }
 
@@ -372,6 +568,7 @@ class PointGame {
                 // A. Check for DISCARD animation (cards added to tray)
                 if (newTray.length > oldTray.length && lastTurnPlayerId) {
                     const discardedCards = newTray.slice(oldTray.length);
+                    this.sfx.playCardSnap();
                     this.animateDiscard(lastTurnPlayerId, discardedCards);
                 }
                 // B. Check for OPPONENT PICK animation (cards taken from pile)
@@ -400,10 +597,22 @@ class PointGame {
             });
         }
 
+        // Turn Notification Sound
+        if (gameData.players && gameData.status === 'playing') {
+            const playerIds = Object.keys(gameData.players).sort();
+            const currentTurnId = playerIds[gameData.turnIndex];
+            const lastTurnId = (this.lastGameState && this.lastGameState.players) ? Object.keys(this.lastGameState.players).sort()[this.lastGameState.turnIndex] : null;
+
+            if (currentTurnId === this.myId && lastTurnId !== this.myId) {
+                this.sfx.playYourTurn();
+            }
+        }
+
         // --- LIVE UI UPDATES (Stay Sync'd) ---
         if (gameData.status === 'round_over' && gameData.roundEndTime) {
             if (!this.lastGameState || this.lastGameState.status !== 'round_over') {
                 document.getElementById('scoreboard-screen').classList.add('active-screen');
+                this.sfx.playShowWin();
             }
             this._updateRoundCountdown(gameData);
         } else {
@@ -427,6 +636,11 @@ class PointGame {
 
         // 4. FINALLY, update the game's "memory" for the next cycle.
         this.lastGameState = JSON.parse(JSON.stringify(gameData));
+
+        // 5. If Host, monitor and trigger bot turn if current player is a bot
+        if (this.isHost && gameData.status === 'playing') {
+            this._checkAndHandleBotTurn(gameData);
+        }
     }
 
     // --- GAME ACTIONS (WRITING TO FIREBASE) ---
@@ -464,6 +678,12 @@ class PointGame {
         const currentPlayerId = playerIds[gameData.turnIndex];
 
         if (currentPlayerId === playerId) {
+            if (this.botActionTimeout) {
+                clearTimeout(this.botActionTimeout);
+                this.botActionTimeout = null;
+            }
+            this.isExecutingBotTurn = false;
+
             // Use helper to find next valid player, skipping spectators AND the person being kicked
             updates.turnIndex = this._getNextActivePlayerIndex(gameData, playerId);
             updates.turnPhase = 'discard'; // Reset phase for next player
@@ -496,16 +716,435 @@ class PointGame {
         return nextIndex; // Fallback to current if nobody else active
     }
 
+    leaveGame(isFromLobby = false) {
+        if (!this.gameCode) {
+            this.showScreen('start-screen');
+            return;
+        }
+
+        if (isFromLobby) {
+            this.executeLeaveGame(true);
+        } else {
+            const modal = document.getElementById('leave-confirm-modal');
+            if (modal) modal.style.display = 'flex';
+            else this.executeLeaveGame(false);
+        }
+    }
+
+    cancelLeaveGame() {
+        const modal = document.getElementById('leave-confirm-modal');
+        if (modal) modal.style.display = 'none';
+    }
+
+    async executeLeaveGame(isFromLobby = false) {
+        this.cancelLeaveGame();
+        if (!this.gameCode) {
+            this.showScreen('start-screen');
+            return;
+        }
+
+        const code = this.gameCode;
+        const wasHost = this.isHost;
+        const myId = this.myId;
+        const gameRef = this.gameRef;
+
+        // Clear all timers
+        if (this.botActionTimeout) {
+            clearTimeout(this.botActionTimeout);
+            this.botActionTimeout = null;
+        }
+        this.isExecutingBotTurn = false;
+
+        if (this.hostHeartbeatInterval) {
+            clearInterval(this.hostHeartbeatInterval);
+            this.hostHeartbeatInterval = null;
+        }
+        if (this.hostAutoMigrationTimer) {
+            clearInterval(this.hostAutoMigrationTimer);
+            this.hostAutoMigrationTimer = null;
+        }
+        if (this.roundCountdownInterval) {
+            clearInterval(this.roundCountdownInterval);
+            this.roundCountdownInterval = null;
+        }
+
+        // Close and clean WebRTC Media Streams & Peer
+        if (this.localMediaStream) {
+            try {
+                this.localMediaStream.getTracks().forEach(t => t.stop());
+            } catch (e) {}
+            this.localMediaStream = null;
+        }
+        this.isMuted = true;
+        this.isVideoOff = true;
+        this._updateMediaButtonStates();
+
+        if (this.peer) {
+            try { this.peer.destroy(); } catch (e) {}
+            this.peer = null;
+        }
+
+        // Cancel onDisconnect handlers in Firebase
+        try {
+            const playerBaseRef = ref(db, `games/${code}/players/${myId}`);
+            onDisconnect(playerBaseRef).cancel();
+            if (wasHost) {
+                const hostStatusRef = ref(db, `games/${code}/hostStatus`);
+                onDisconnect(hostStatusRef).cancel();
+            }
+        } catch (e) {}
+
+        // Unsubscribe Firebase listener
+        if (this.unsubscribeGame) {
+            try { this.unsubscribeGame(); } catch (e) {}
+            this.unsubscribeGame = null;
+        }
+
+        // Database updates for leaving player
+        try {
+            if (gameRef) {
+                const snapshot = await get(gameRef);
+                if (snapshot.exists()) {
+                    const gameData = snapshot.val();
+                    const players = gameData.players || {};
+                    const humanPlayerIds = Object.keys(players).filter(pid => pid !== myId && !players[pid].isBot);
+                    const allOtherPlayerIds = Object.keys(players).filter(pid => pid !== myId);
+
+                    if (isFromLobby) {
+                        if (allOtherPlayerIds.length === 0) {
+                            // No one left, delete the lobby
+                            await set(gameRef, null);
+                        } else {
+                            const updates = { [`players/${myId}`]: null };
+                            if (wasHost) {
+                                // Transfer host to next available player (prefer human, else bot)
+                                const newHostId = humanPlayerIds[0] || allOtherPlayerIds[0];
+                                updates.hostId = newHostId;
+                                updates['hostStatus/hostId'] = newHostId;
+                                updates['hostStatus/online'] = true;
+                            }
+                            await update(gameRef, updates);
+                        }
+                    } else {
+                        // In active game
+                        if (humanPlayerIds.length === 0) {
+                            // No humans remaining in game, close game
+                            await set(gameRef, null);
+                        } else {
+                            const updates = {
+                                [`players/${myId}/online`]: false,
+                                [`players/${myId}/activeInRound`]: false
+                            };
+                            // If it was this player's turn, advance turn
+                            const playerIds = Object.keys(players).sort();
+                            if (playerIds[gameData.turnIndex] === myId) {
+                                updates.turnIndex = this._getNextActivePlayerIndex(gameData, myId);
+                                updates.turnPhase = 'discard';
+                            }
+                            if (wasHost) {
+                                const newHostId = humanPlayerIds[0];
+                                updates.hostId = newHostId;
+                                updates['hostStatus/hostId'] = newHostId;
+                                updates['hostStatus/online'] = true;
+                            }
+                            await update(gameRef, updates);
+                        }
+                    }
+                }
+            }
+        } catch (err) {
+            console.warn("Leave game sync error:", err);
+        }
+
+        // Reset local state
+        this.gameCode = null;
+        this.gameRef = null;
+        this.isHost = false;
+        this.lastGameState = {};
+        this.selectedCardIndices = [];
+        this.pendingLocalPickAnim = null;
+
+        // Clear URL gameCode parameter so refresh doesn't auto-rejoin
+        if (window.history && window.history.replaceState) {
+            const cleanUrl = window.location.protocol + "//" + window.location.host + window.location.pathname;
+            window.history.replaceState({ path: cleanUrl }, '', cleanUrl);
+        }
+
+        // Close any open modals
+        const scoreboardScreen = document.getElementById('scoreboard-screen');
+        if (scoreboardScreen) scoreboardScreen.classList.remove('active-screen');
+        const playerListScreen = document.getElementById('player-list-screen');
+        if (playerListScreen) playerListScreen.classList.remove('active-screen');
+        const howToPlayScreen = document.getElementById('how-to-play-screen');
+        if (howToPlayScreen) howToPlayScreen.classList.remove('active-screen');
+
+        this.showScreen('start-screen');
+        this.showToast(isFromLobby ? "Left lobby." : "Left game.");
+    }
+
+    async addBot() {
+        if (!this.isHost) return;
+        const snapshot = await get(ref(db, `games/${this.gameCode}/players`));
+        const currentPlayers = snapshot.val() || {};
+        const pCount = Object.keys(currentPlayers).length;
+        if (pCount >= 8) {
+            return this.showToast("Maximum 8 players allowed in lobby.");
+        }
+
+        const existingNames = Object.values(currentPlayers).map(p => p.name);
+        let availableNames = this.botNamesPool.filter(n => !existingNames.includes(`🤖 ${n}`) && !existingNames.includes(n));
+        if (availableNames.length === 0) availableNames = [`Bot ${pCount + 1}`];
+        const chosenName = `🤖 ${availableNames[Math.floor(Math.random() * availableNames.length)]}`;
+
+        const botId = `bot_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+        await update(this.gameRef, {
+            [`players/${botId}`]: {
+                name: chosenName,
+                isBot: true,
+                online: true,
+                activeInRound: true,
+                hand: []
+            }
+        });
+        this.showToast(`${chosenName} added to lobby!`);
+    }
+
+    _checkAndHandleBotTurn(gameData) {
+        if (!this.isHost || gameData.status !== 'playing' || this.isExecutingBotTurn) {
+            return;
+        }
+
+        const playerIds = Object.keys(gameData.players || {}).sort();
+        const currentPid = playerIds[gameData.turnIndex];
+        const currentPlayer = gameData.players?.[currentPid];
+
+        if (!currentPlayer || !currentPlayer.isBot || currentPlayer.activeInRound === false) {
+            return;
+        }
+
+        this.isExecutingBotTurn = true;
+
+        if (gameData.turnPhase === 'discard') {
+            const hand = currentPlayer.hand || [];
+            const handSum = this._calculateHandSum(hand);
+
+            // Bot SHOW Decision:
+            // Sum <= 3: 100% SHOW
+            // Sum == 4: 90% SHOW
+            // Sum == 5: 75% SHOW
+            let shouldShow = false;
+            if (handSum <= 5) {
+                if (handSum <= 3) shouldShow = true;
+                else if (handSum === 4) shouldShow = Math.random() < 0.90;
+                else if (handSum === 5) shouldShow = Math.random() < 0.75;
+            }
+
+            if (shouldShow) {
+                this.botActionTimeout = setTimeout(async () => {
+                    this.isExecutingBotTurn = false;
+                    this.showToast(`${currentPlayer.name} declares SHOW!`);
+                    await update(this.gameRef, {
+                        status: 'calculating_scores',
+                        showInitiatedBy: currentPid
+                    });
+                }, 1400);
+            } else {
+                this.botActionTimeout = setTimeout(async () => {
+                    await this._executeBotDiscard(currentPid, currentPlayer, gameData);
+                    this.isExecutingBotTurn = false;
+                }, 1300);
+            }
+        } else if (gameData.turnPhase === 'pick') {
+            this.botActionTimeout = setTimeout(async () => {
+                await this._executeBotPick(currentPid, currentPlayer, gameData);
+                this.isExecutingBotTurn = false;
+            }, 1100);
+        }
+    }
+
+    async _executeBotDiscard(botId, botPlayer, gameData) {
+        const hand = [...(botPlayer.hand || [])];
+        if (hand.length === 0) return;
+
+        // Group cards by value to identify multi-card discard sets
+        const groups = {};
+        hand.forEach((card, idx) => {
+            if (!groups[card.v]) groups[card.v] = [];
+            groups[card.v].push({ card, idx });
+        });
+
+        const candidateMoves = [];
+
+        // 1. Multi-card sets (pairs, triplets, quads of same value)
+        Object.entries(groups).forEach(([valStr, items]) => {
+            const v = Number(valStr);
+            if (v === 0) return; // Never discard Jokers as set
+            if (items.length > 1) {
+                candidateMoves.push({
+                    cards: items.map(i => i.card),
+                    indices: items.map(i => i.idx),
+                    pointsEliminated: items.length * v,
+                    cardValue: v,
+                    count: items.length
+                });
+            }
+        });
+
+        // 2. Single cards
+        hand.forEach((card, idx) => {
+            if (card.v === 0) return; // Protect Jokers
+            candidateMoves.push({
+                cards: [card],
+                indices: [idx],
+                pointsEliminated: card.v,
+                cardValue: card.v,
+                count: 1
+            });
+        });
+
+        // Fallback: If only Jokers remain in hand
+        if (candidateMoves.length === 0) {
+            candidateMoves.push({
+                cards: [hand[0]],
+                indices: [0],
+                pointsEliminated: 0,
+                cardValue: 0,
+                count: 1
+            });
+        }
+
+        // Sort: Move that discards the most points wins; tiebreaker is higher face value
+        candidateMoves.sort((a, b) => {
+            if (b.pointsEliminated !== a.pointsEliminated) {
+                return b.pointsEliminated - a.pointsEliminated;
+            }
+            return b.cardValue - a.cardValue;
+        });
+
+        const bestMove = candidateMoves[0];
+        const discardedCards = bestMove.cards;
+        const discardIndices = bestMove.indices;
+
+        const newHand = hand.filter((_, idx) => !discardIndices.includes(idx));
+        const tray = gameData.tray || [];
+        const eligibleTrayCardIndex = tray.length > 0 ? tray.length - 1 : -1;
+        const newTray = [...tray, ...discardedCards];
+
+        this.sfx.playCardSnap();
+        await update(this.gameRef, {
+            [`players/${botId}/hand`]: newHand,
+            'tray': newTray,
+            'turnPhase': 'pick',
+            'eligibleTrayCardIndex': eligibleTrayCardIndex,
+            'lastDiscardCount': discardedCards.length,
+            'showPreviousCard': true
+        });
+    }
+
+    async _executeBotPick(botId, botPlayer, gameData) {
+        let drawPile = [...(gameData.drawPile || [])];
+        let tray = [...(gameData.tray || [])];
+        const eligibleIndex = gameData.eligibleTrayCardIndex;
+        const isTrayPickable = eligibleIndex > -1 && tray[eligibleIndex];
+        const hand = botPlayer.hand || [];
+
+        // Check if there are cards available
+        const isDrawPileEmpty = drawPile.length === 0;
+        const canReshuffle = tray.length > 1;
+
+        if (isDrawPileEmpty && !isTrayPickable && !canReshuffle) {
+            // Stuck turn failsafe: skip pick and advance
+            let nextIndex = this._getNextActivePlayerIndex(gameData, null);
+            await update(this.gameRef, {
+                turnIndex: nextIndex,
+                turnPhase: 'discard',
+                eligibleTrayCardIndex: null
+            });
+            return;
+        }
+
+        let pickSource = 'draw';
+        if (isTrayPickable) {
+            const topTrayCard = tray[eligibleIndex];
+            const v = topTrayCard.v;
+
+            // Decision Logic:
+            // 1. Joker (0 pts): ALWAYS pick tray
+            if (topTrayCard.s === 'Joker' || v === 0) {
+                pickSource = 'tray';
+            }
+            // 2. Ace or 2 (1-2 pts): ALWAYS pick tray
+            else if (v <= 2) {
+                pickSource = 'tray';
+            }
+            // 3. Completes or extends a set/pair with card in hand (value >= 6)
+            else if (hand.some(c => c.v === v && c.v >= 6)) {
+                pickSource = 'tray';
+            }
+            // 4. Low card (3 or 4) AND lower than highest card in hand
+            else if (v <= 4) {
+                const maxValInHand = hand.length > 0 ? Math.max(...hand.map(c => c.v)) : 10;
+                if (v < maxValInHand) {
+                    pickSource = 'tray';
+                }
+            }
+        }
+
+        // If draw pile is empty and cannot pick tray, reshuffle tray
+        if (pickSource === 'draw' && drawPile.length === 0) {
+            if (canReshuffle) {
+                let keptCard = tray.pop();
+                drawPile = this._shuffle(tray);
+                tray = keptCard ? [keptCard] : [];
+            } else if (isTrayPickable) {
+                pickSource = 'tray';
+            }
+        }
+
+        let pickedCard;
+        let updates = {};
+
+        if (pickSource === 'tray' && isTrayPickable) {
+            pickedCard = tray[eligibleIndex];
+            tray.splice(eligibleIndex, 1);
+            updates.showPreviousCard = false;
+            updates.lastDiscardCount = 0;
+        } else {
+            pickedCard = drawPile.pop();
+        }
+
+        if (!pickedCard) {
+            pickedCard = { v: 1, s: '♥' };
+        }
+
+        updates.drawPile = drawPile;
+        updates.tray = tray;
+        updates[`players/${botId}/hand`] = [...hand, pickedCard];
+
+        // Advance turn to next active player
+        updates.turnIndex = this._getNextActivePlayerIndex(gameData, null);
+        updates.turnPhase = 'discard';
+        updates.eligibleTrayCardIndex = null;
+
+        await update(this.gameRef, updates);
+    }
+
     async startGame() {
         if (!this.isHost) return;
         const snapshot = await get(ref(db, `games/${this.gameCode}/players`));
-        if (Object.keys(snapshot.val() || {}).length < 2) return this.showToast("Need at least 2 players.");
+        if (Object.keys(snapshot.val() || {}).length < 2) return this.showToast("Need at least 2 players (or click 🤖 Add Bot!).");
 
         await this.startNewRound(1);
     }
 
     async startNewRound(roundNumber) {
         if (!this.isHost) return;
+
+        if (this.botActionTimeout) {
+            clearTimeout(this.botActionTimeout);
+            this.botActionTimeout = null;
+        }
+        this.isExecutingBotTurn = false;
 
         const playersSnapshot = await get(ref(db, `games/${this.gameCode}/players`));
         const currentPlayers = playersSnapshot.val() || {};
@@ -584,6 +1223,7 @@ class PointGame {
         const newTray = [...tray, ...cardsToDiscard];
 
         this.selectedCardIndices = [];
+        this.sfx.playCardSnap();
         await update(this.gameRef, {
             [`players/${this.myId}/hand`]: newHand,
             'tray': newTray,
@@ -911,8 +1551,25 @@ class PointGame {
                 return;
             }
         } else {
+            // MUTE MIC -> Explicitly stop hardware tracks to release hardware microphone!
             this.isMuted = true;
-            this.localMediaStream.getAudioTracks().forEach(t => t.enabled = false);
+            const oldAudioTracks = this.localMediaStream.getAudioTracks();
+            oldAudioTracks.forEach(t => {
+                t.stop();
+                this.localMediaStream.removeTrack(t);
+            });
+
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const dst = audioCtx.createMediaStreamDestination();
+            const dummyAudioTrack = dst.stream.getAudioTracks()[0];
+            dummyAudioTrack.enabled = false;
+            this.localMediaStream.addTrack(dummyAudioTrack);
+
+            Object.values(this.voiceConnections).forEach(call => {
+                const sender = call.peerConnection?.getSenders().find(s => s.track?.kind === 'audio');
+                if (sender) sender.replaceTrack(dummyAudioTrack);
+            });
+
             this.showToast("Microphone OFF");
         }
 
@@ -956,8 +1613,27 @@ class PointGame {
                 return;
             }
         } else {
+            // TURN OFF CAMERA -> Explicitly stop hardware tracks to turn off laptop camera LED light!
             this.isVideoOff = true;
-            this.localMediaStream.getVideoTracks().forEach(t => t.enabled = false);
+            const oldVideoTracks = this.localMediaStream.getVideoTracks();
+            oldVideoTracks.forEach(t => {
+                t.stop();
+                this.localMediaStream.removeTrack(t);
+            });
+
+            const dummyCanvas = document.createElement('canvas');
+            dummyCanvas.width = 10;
+            dummyCanvas.height = 10;
+            const dummyTrack = dummyCanvas.captureStream(1).getVideoTracks()[0];
+            dummyTrack.enabled = false;
+            this.localMediaStream.addTrack(dummyTrack);
+
+            Object.values(this.voiceConnections).forEach(call => {
+                const sender = call.peerConnection?.getSenders().find(s => s.track?.kind === 'video');
+                if (sender) sender.replaceTrack(dummyTrack);
+            });
+
+            if (selfVideoEl) selfVideoEl.srcObject = null;
             if (selfBox) selfBox.style.display = 'none';
             this.showToast("Camera OFF");
         }
@@ -1060,6 +1736,58 @@ class PointGame {
 
         this.voiceConnections[call.peer] = call;
     }
+
+    destroyWebRTC() {
+        if (this.localMediaStream) {
+            this.localMediaStream.getTracks().forEach(t => t.stop());
+            this.localMediaStream = null;
+        }
+        Object.values(this.voiceConnections).forEach(call => {
+            try { call.close(); } catch (e) {}
+        });
+        this.voiceConnections = {};
+        this.remoteStreams = {};
+        if (this.peer) {
+            try { this.peer.destroy(); } catch (e) {}
+            this.peer = null;
+        }
+    }
+
+    toggleSFX() {
+        this.sfx.enabled = !this.sfx.enabled;
+        const btn = document.getElementById('btn-sfx');
+        if (btn) {
+            btn.textContent = this.sfx.enabled ? '🔊 Sound ON' : '🔇 Sound OFF';
+            btn.className = `media-btn ${this.sfx.enabled ? 'accent' : 'danger'}`;
+        }
+        this.showToast(this.sfx.enabled ? "Sound SFX Enabled" : "Sound SFX Muted");
+    }
+
+    // --- HOST FAIL-SAFE: SKIP ROUND ---
+    async skipRound() {
+        if (!this.isHost) return;
+        if (!confirm("Are you sure you want to skip this round? Every player will receive 0 points for this round.")) return;
+
+        const gameData = this.lastGameState;
+        if (!gameData || !gameData.players) return;
+
+        const playerIds = Object.keys(gameData.players).sort();
+        const roundScores = {};
+        playerIds.forEach(pid => {
+            roundScores[pid] = 0; // 0 points awarded to all players for skipped round
+        });
+
+        const currentRound = gameData.currentRound || 1;
+        const updates = {
+            [`scores/${currentRound}`]: roundScores,
+            status: 'round_over',
+            roundEndTime: Date.now() + 5000, // 5s brief notice before dealing fresh round
+            roundEndMessage: "Round skipped by Host (0 pts to all)."
+        };
+
+        await update(this.gameRef, updates);
+        this.showToast("Round skipped! Starting next round...");
+    }
     // --- CARD & DECK LOGIC (PRIVATE) ---
 
     showPlayerList() {
@@ -1081,7 +1809,8 @@ class PointGame {
             if (!p) return;
 
             let li = document.createElement('li');
-            const playerInfo = `<div>${p.name} ${pid === hostId ? '👑' : ''}</div>`;
+            const botBadge = p.isBot ? `<span class="bot-badge">BOT</span>` : '';
+            const playerInfo = `<div>${p.name} ${pid === hostId ? '👑' : ''}${botBadge}</div>`;
 
             const buttonsContainer = document.createElement('div');
 
@@ -1264,8 +1993,8 @@ class PointGame {
         const { display, color } = this._getCardDisplay(pickedCard);
         const isJoker = pickedCard.s === 'Joker';
         const cardInnerHtml = `<div class="card-corner">${display}<br>${isJoker ? '' : pickedCard.s}</div>` +
-                              `<div class="card-center">${isJoker ? 'JOKER' : pickedCard.s}</div>` +
-                              `<div class="card-corner bottom">${display}<br>${isJoker ? '' : pickedCard.s}</div>`;
+            `<div class="card-center">${isJoker ? 'JOKER' : pickedCard.s}</div>` +
+            `<div class="card-corner bottom">${display}<br>${isJoker ? '' : pickedCard.s}</div>`;
 
         if (source === 'draw') {
             // 3D Flip Animation (Deck Pick)
@@ -1390,8 +2119,8 @@ class PointGame {
             slideCard.style.zIndex = `${200 + i}`;
             slideCard.style.transition = 'all 0.55s cubic-bezier(0.25, 1, 0.5, 1)';
             slideCard.innerHTML = `<div class="card-corner">${display}<br>${isJoker ? '' : card.s}</div>` +
-                                  `<div class="card-center">${isJoker ? 'JOKER' : card.s}</div>` +
-                                  `<div class="card-corner bottom">${display}<br>${isJoker ? '' : card.s}</div>`;
+                `<div class="card-center">${isJoker ? 'JOKER' : card.s}</div>` +
+                `<div class="card-corner bottom">${display}<br>${isJoker ? '' : card.s}</div>`;
 
             animationLayer.appendChild(slideCard);
 
@@ -1431,7 +2160,9 @@ class PointGame {
             }
             document.getElementById('lobby-code-display').innerText = this.gameCode;
             document.getElementById('host-settings').style.display = this.isHost ? 'block' : 'none';
-            document.getElementById('start-game-btn').style.display = this.isHost ? 'block' : 'none';
+            document.getElementById('start-game-btn').style.display = this.isHost ? 'inline-block' : 'none';
+            const addBotBtn = document.getElementById('add-bot-btn');
+            if (addBotBtn) addBotBtn.style.display = this.isHost ? 'inline-block' : 'none';
             document.getElementById('waiting-text').style.display = this.isHost ? 'none' : 'block';
             if (this.isHost) document.getElementById('late-penalty-input').value = settings.latePenalty;
 
@@ -1440,10 +2171,13 @@ class PointGame {
             Object.entries(players || {}).sort((a, b) => a[0].localeCompare(b[0])).forEach(([pid, p]) => {
                 let li = document.createElement('li');
                 let videoBox = '';
-                if (pid !== this.myId && p.peerId && this.remoteStreams[p.peerId]) {
+                if (p.isBot) {
+                    videoBox = `<div class="lobby-player-video-box" style="display:inline-flex; align-items:center; justify-content:center; background:#240046; border-color:#9d4edd; font-size:18px;">🤖</div>`;
+                } else if (pid !== this.myId && p.peerId && this.remoteStreams[p.peerId]) {
                     videoBox = `<div class="lobby-player-video-box"><video id="lobby-vid-${p.peerId}" autoplay playsinline class="lobby-player-video"></video></div>`;
                 }
-                li.innerHTML = `<div style="display:flex; align-items:center;">${videoBox}<span>${p.name} ${pid === hostId ? '👑' : ''}</span></div>`;
+                const botBadge = p.isBot ? `<span class="bot-badge">BOT</span>` : '';
+                li.innerHTML = `<div style="display:flex; align-items:center;">${videoBox}<span>${p.name} ${pid === hostId ? '👑' : ''}${botBadge}</span></div>`;
                 if (this.isHost && pid !== this.myId) {
                     let kickBtn = document.createElement('button');
                     kickBtn.innerText = 'Kick';
@@ -1454,7 +2188,7 @@ class PointGame {
                 }
                 list.appendChild(li);
 
-                if (pid !== this.myId && p.peerId && this.remoteStreams[p.peerId]) {
+                if (!p.isBot && pid !== this.myId && p.peerId && this.remoteStreams[p.peerId]) {
                     const vEl = li.querySelector(`#lobby-vid-${p.peerId}`);
                     if (vEl && vEl.srcObject !== this.remoteStreams[p.peerId]) {
                         vEl.srcObject = this.remoteStreams[p.peerId];
@@ -1472,7 +2206,12 @@ class PointGame {
             const me = players[this.myId];
             if (!me) return;
 
-            const myHand = me.hand || [];
+            // Hand Cache Protection against brief network drops/flits
+            if (me.hand && me.hand.length > 0) {
+                this.cachedMyHand = me.hand;
+            }
+            const myHand = (me.hand && me.hand.length > 0) ? me.hand : (this.cachedMyHand || []);
+
             const currentPlayerId = playerIds[turnIndex];
             // Safety check for currentPlayer
             const currentPlayer = players[currentPlayerId] || { name: 'Unknown' };
@@ -1482,6 +2221,11 @@ class PointGame {
             document.getElementById('game-room-id').innerText = this.gameCode;
             document.getElementById('round-indicator').innerText = `Round: ${gameData.currentRound}`;
             document.getElementById('turn-indicator').innerText = isMyTurn ? `YOUR TURN (${turnPhase.toUpperCase()})` : `${currentPlayer.name}'s Turn`;
+
+            const btnSkipRound = document.getElementById('btn-skip-round');
+            if (btnSkipRound) {
+                btnSkipRound.style.display = (this.isHost && (status === 'playing' || status === 'round_over')) ? 'inline-block' : 'none';
+            }
 
             // Opponents
             this.renderOpponents(players, currentPlayerId, status === 'round_over');
@@ -1751,7 +2495,9 @@ class PointGame {
             div.style.transform = 'translate(-50%, -50%)';
 
             let videoHtml = '';
-            if (p.peerId && this.remoteStreams[p.peerId]) {
+            if (p.isBot) {
+                videoHtml = `<div class="opponent-bot-avatar">🤖</div>`;
+            } else if (p.peerId && this.remoteStreams[p.peerId]) {
                 videoHtml = `<div class="opponent-video-container"><video id="opp-vid-${p.peerId}" autoplay playsinline class="opponent-video"></video></div>`;
             }
 
